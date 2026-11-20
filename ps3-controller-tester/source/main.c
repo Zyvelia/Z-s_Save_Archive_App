@@ -187,7 +187,7 @@ static bool present(unsigned back, const Dashboard *data)
 
 int main(void)
 {
-    startup_log("Controller Tester 1.0 starting", true);
+    startup_log("Controller Tester 1.1 starting", true);
     if (!init_video() || ioPadInit(MAX_PORT_NUM) != 0)
         return 1;
     if (sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sysutil_event, NULL) != 0) {

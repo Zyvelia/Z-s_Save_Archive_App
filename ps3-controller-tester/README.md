@@ -2,7 +2,7 @@
 
 ![Dashboard preview rendered from app code with sample input](preview.png)
 
-The dashboard shows the first connected standard controller, with raw stick coordinates (0–255), highlighted buttons, and separate L2 and R2 bars. On controllers that report pressure, the bars use the reported values. Other controllers show pressed or released.
+Version 1.1 shows the first connected standard controller on a plum gradient dashboard. The on-screen sticks move with the physical sticks, and controls light up in their matching positions. The side panel shows raw stick coordinates (0–255) and separate L2 and R2 bars. On controllers that report pressure, the bars use the reported values. Other controllers show pressed or released.
 
 Press **Select** and leave both sticks untouched for three seconds to check drift. Each stick reports its largest deviation from 128 on either axis, measured in raw controller units. Try the check again after moving and releasing the sticks if you want to compare where they settle. Hold **Start** for one second to exit.
 

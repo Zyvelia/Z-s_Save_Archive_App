@@ -28,11 +28,11 @@ typedef struct {
     bool drift_done;
 } Dashboard;
 
-static const uint32_t background = 0xff101723;
-static const uint32_t panel = 0xff1b2636;
-static const uint32_t subtle = 0xff344458;
+static const uint32_t background = 0xff21152f;
+static const uint32_t panel = 0xff342345;
+static const uint32_t subtle = 0xff554369;
 static const uint32_t ink = 0xffedf3fb;
-static const uint32_t muted = 0xffb1c3d8;
+static const uint32_t muted = 0xffccbddc;
 static const uint32_t mint = 0xff8ce9c7;
 static const uint32_t amber = 0xffffca85;
 
@@ -72,96 +72,142 @@ static void disc(Canvas c, int x, int y, int radius, uint32_t color)
     }
 }
 
-static void stick(Canvas c, const Dashboard *data, unsigned index, unsigned x)
+static void rounded_box(Canvas c, unsigned x, unsigned y, unsigned w, unsigned h,
+                        unsigned radius, uint32_t color)
 {
-    const unsigned axis_x = data->axes[index * 2];
-    const unsigned axis_y = data->axes[index * 2 + 1];
-    const uint32_t accent = index ? amber : mint;
-    char value[32];
-
-    box(c, x, 80, 274, 122, panel);
-    box(c, x, 80, 274, 2, accent);
-    print(c, x + 12, 94, 2, ink, index ? "RIGHT STICK" : "LEFT STICK");
-    disc(c, x + 52, 151, 34, subtle);
-    disc(c, x + 52, 151, 32, background);
-    box(c, x + 22, 151, 61, 1, subtle);
-    box(c, x + 52, 121, 1, 61, subtle);
-    if (data->sampled)
-        disc(c, x + 22 + axis_x * 60 / 255, 121 + axis_y * 60 / 255, 4, accent);
-
-    if (data->sampled)
-        snprintf(value, sizeof(value), "X %3u   Y %3u", axis_x, axis_y);
-    else
-        snprintf(value, sizeof(value), "NO INPUT");
-    print(c, x + 102, 133, 2, ink, value);
-    if (data->drift_done || data->drift_seconds) {
-        snprintf(value, sizeof(value), "PEAK OFFSET %u", data->drift_peak[index]);
-        print(c, x + 102, 162, 1, accent, value);
-    } else {
-        print(c, x + 102, 162, 1, muted, "CENTER 128");
+    box(c, x, y + radius, w, h - 2 * radius, color);
+    for (unsigned row = 0; row < radius; ++row) {
+        unsigned edge = radius;
+        unsigned dy = radius - row - 1;
+        while (edge * edge + dy * dy > radius * radius)
+            --edge;
+        unsigned inset = radius - edge;
+        box(c, x + inset, y + row, w - 2 * inset, 1, color);
+        box(c, x + inset, y + h - 1 - row, w - 2 * inset, 1, color);
     }
+}
+
+static void button(Canvas c, const Dashboard *data, enum button_id id,
+                   unsigned x, unsigned y, unsigned width, const char *label, uint32_t color)
+{
+    bool down = data->sampled && data->buttons[id];
+    rounded_box(c, x, y, width, 18, 5, down ? color : 0xff20182e);
+    unsigned label_width = (unsigned)strlen(label) * 6 - 1;
+    print(c, x + (width - label_width) / 2, y + 6, 1, down ? background : ink, label);
+}
+
+static void live_stick(Canvas c, const Dashboard *data, unsigned index, int x, int y)
+{
+    const uint32_t accent = index ? amber : mint;
+    int dx = 0, dy = 0;
+    if (data->sampled) {
+        dx = ((int)data->axes[2 * index] - 128) * 12 / 128;
+        dy = ((int)data->axes[2 * index + 1] - 128) * 12 / 128;
+    }
+    disc(c, x, y, 27, 0xff6b5a81);
+    disc(c, x, y, 24, 0xff1b1428);
+    if (dx || dy)
+        disc(c, x + dx / 2, y + dy / 2, 13, subtle);
+    bool down = data->sampled && data->buttons[index ? R3 : L3];
+    disc(c, x + dx, y + dy, 12, accent);
+    disc(c, x + dx, y + dy, 9, down ? accent : 0xff403151);
+    print(c, x + dx - 5, y + dy - 3, 1, down ? background : ink, index ? "R3" : "L3");
+}
+
+static void controller(Canvas c, const Dashboard *data)
+{
+    /* Shoulder buttons sit behind the two-tone shell and grips. */
+    button(c, data, L2, 91, 93, 50, "L2", mint);
+    button(c, data, R2, 307, 93, 50, "R2", amber);
+    button(c, data, L1, 100, 110, 41, "L1", mint);
+    button(c, data, R1, 307, 110, 41, "R1", amber);
+    rounded_box(c, 57, 132, 111, 159, 48, 0xff24192f);
+    rounded_box(c, 280, 132, 111, 159, 48, 0xff24192f);
+    rounded_box(c, 60, 127, 103, 152, 46, 0xff685781);
+    rounded_box(c, 285, 127, 103, 152, 46, 0xff685781);
+    rounded_box(c, 71, 151, 80, 121, 36, 0xff534568);
+    rounded_box(c, 297, 151, 80, 121, 36, 0xff534568);
+    rounded_box(c, 86, 126, 276, 109, 38, 0xff77668d);
+    rounded_box(c, 94, 136, 260, 93, 31, 0xff635376);
+    rounded_box(c, 200, 134, 48, 4, 2, data->sampled ? mint : subtle);
+
+    button(c, data, UP, 121, 147, 24, "UP", mint);
+    button(c, data, LEFT, 97, 167, 34, "LEFT", mint);
+    button(c, data, RIGHT, 135, 167, 36, "RIGHT", mint);
+    button(c, data, DOWN, 116, 187, 34, "DOWN", mint);
+    button(c, data, TRIANGLE, 301, 145, 26, "TRI", mint);
+    button(c, data, SQUARE, 273, 165, 27, "SQ", 0xffdfa6ed);
+    button(c, data, CIRCLE, 329, 165, 27, "O", 0xfff5a4ab);
+    button(c, data, CROSS, 301, 186, 26, "X", 0xffb3bdff);
+    button(c, data, SELECT, 182, 158, 40, "SELECT", mint);
+    button(c, data, START, 227, 158, 38, "START", amber);
+
+    live_stick(c, data, 0, 183, 218);
+    live_stick(c, data, 1, 265, 218);
 }
 
 static void draw_dashboard(Canvas c, const Dashboard *data)
 {
-    static const char *names[BUTTON_COUNT] = {
-        "UP", "DOWN", "LEFT", "RIGHT", "TRIANGLE", "CIRCLE", "CROSS", "SQUARE",
-        "L1", "L2", "L3", "SELECT", "R1", "R2", "R3", "START"
-    };
-    static const enum button_id order[] = {
-        UP, DOWN, LEFT, RIGHT, TRIANGLE, CIRCLE, CROSS, SQUARE,
-        L1, L2, L3, SELECT, R1, R2, R3, START
-    };
-    char status[48];
-    box(c, 0, 0, 640, 360, background);
-    print(c, 40, 26, 3, ink, "CONTROLLER TESTER");
+    char line[48];
+    for (unsigned y = 0; y < 360; ++y) {
+        uint32_t red = 48u - y * 17u / 359u;
+        uint32_t green = 28u - y * 11u / 359u;
+        uint32_t blue = 75u - y * 23u / 359u;
+        box(c, 0, y, 640, 1, 0xff000000u | (red << 16) | (green << 8) | blue);
+    }
+    print(c, 36, 26, 3, ink, "CONTROLLER TESTER");
     if (data->connected)
-        snprintf(status, sizeof(status), "PORT %u", data->port + 1);
+        snprintf(line, sizeof(line), "PORT %u", data->port + 1);
     else
-        snprintf(status, sizeof(status), "NO CONTROLLER");
-    box(c, 469, 27, 131, 20, panel);
-    print(c, 479, 33, 1, data->connected ? mint : amber, status);
-    print(c, 40, 58, 1, muted, "LIVE INPUT");
-    box(c, 40, 71, 560, 1, subtle);
+        snprintf(line, sizeof(line), "NO CONTROLLER");
+    rounded_box(c, 468, 27, 136, 22, 6, panel);
+    print(c, 480, 34, 1, data->connected ? mint : amber, line);
+    box(c, 36, 64, 568, 1, subtle);
 
-    stick(c, data, 0, 40);
-    stick(c, data, 1, 326);
-    box(c, 40, 212, 328, 101, panel);
-    box(c, 380, 212, 220, 101, panel);
-    print(c, 52, 221, 2, ink, "BUTTONS");
-    for (unsigned i = 0; i < BUTTON_COUNT; ++i) {
-        unsigned x = 52 + (i % 4) * 77;
-        unsigned y = 240 + (i / 4) * 16;
-        bool pressed = data->sampled && data->buttons[order[i]];
-        box(c, x, y, 69, 13, pressed ? mint : subtle);
-        print(c, x + 6, y + 3, 1, pressed ? background : ink, names[i]);
-    }
-
-    print(c, 392, 221, 2, ink, "TRIGGERS");
+    controller(c, data);
+    rounded_box(c, 410, 81, 194, 215, 14, panel);
     for (unsigned i = 0; i < 2; ++i) {
-        const unsigned y = 243 + 31 * i;
-        const unsigned value = data->triggers[i];
+        const unsigned y = 93 + i * 49;
         const uint32_t accent = i ? amber : mint;
-        print(c, 392, y, 1, ink, i ? "R2" : "L2");
-        if (!data->sampled)
-            snprintf(status, sizeof(status), "NO INPUT");
-        else if (data->pressure)
-            snprintf(status, sizeof(status), "%u", value);
-        else
-            snprintf(status, sizeof(status), "%s", value ? "PRESSED" : "RELEASED");
-        print(c, 505, y, 1, muted, status);
-        box(c, 392, y + 11, 196, 6, subtle);
+        print(c, 424, y, 2, accent, i ? "RIGHT STICK" : "LEFT STICK");
         if (data->sampled)
-            box(c, 392, y + 11, 196 * value / 255, 6, accent);
+            snprintf(line, sizeof(line), "X %3u     Y %3u", data->axes[2 * i], data->axes[2 * i + 1]);
+        else
+            snprintf(line, sizeof(line), "NO INPUT");
+        print(c, 424, y + 19, 1, ink, line);
+        if (data->drift_done || data->drift_seconds)
+            snprintf(line, sizeof(line), "PEAK OFFSET %u", data->drift_peak[i]);
+        else
+            snprintf(line, sizeof(line), "CENTER 128");
+        print(c, 424, y + 31, 1, muted, line);
     }
 
+    box(c, 424, 193, 166, 1, subtle);
+    print(c, 424, 205, 2, ink, "TRIGGERS");
+    for (unsigned i = 0; i < 2; ++i) {
+        const unsigned y = 227 + 28 * i;
+        unsigned value = data->triggers[i];
+        print(c, 424, y, 1, ink, i ? "R2" : "L2");
+        if (!data->sampled)
+            snprintf(line, sizeof(line), "NO INPUT");
+        else if (data->pressure)
+            snprintf(line, sizeof(line), "%u", value);
+        else
+            snprintf(line, sizeof(line), "%s", value ? "PRESSED" : "RELEASED");
+        print(c, 532, y, 1, muted, line);
+        box(c, 424, y + 12, 166, 5, subtle);
+        if (data->sampled)
+            box(c, 424, y + 12, 166 * value / 255, 5, i ? amber : mint);
+    }
+
+    box(c, 36, 313, 568, 1, subtle);
     if (data->drift_seconds)
-        snprintf(status, sizeof(status), "KEEP STICKS STILL   %u S", data->drift_seconds);
+        snprintf(line, sizeof(line), "KEEP STICKS STILL   %u S", data->drift_seconds);
     else if (data->drift_done)
-        snprintf(status, sizeof(status), "DRIFT CHECK COMPLETE   SELECT TO REPEAT");
+        snprintf(line, sizeof(line), "DRIFT CHECK COMPLETE   SELECT TO REPEAT");
     else
-        snprintf(status, sizeof(status), "%s", data->sampled ? "SELECT TO CHECK STICK DRIFT" : "CONNECT A CONTROLLER");
-    print(c, 40, 329, 1, mint, status);
-    print(c, 467, 329, 1, muted, "HOLD START TO EXIT");
+        snprintf(line, sizeof(line), "%s", data->sampled ? "SELECT TO CHECK STICK DRIFT" : "CONNECT A CONTROLLER");
+    print(c, 36, 328, 1, mint, line);
+    print(c, 471, 328, 1, muted, "HOLD START TO EXIT");
 }
 #endif
