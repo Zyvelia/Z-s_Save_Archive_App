@@ -175,8 +175,9 @@ static void sysutil_event(u64 status, u64 param, void *user)
         running = false;
 }
 
-static bool read_buttons(bool *enable_temperatures)
+static bool read_buttons(bool screen_ready, bool *enable_temperatures)
 {
+    static bool cross_released[MAX_PADS];
     padInfo info = {0};
     if (ioPadGetInfo(&info) != 0)
         return false;
@@ -185,7 +186,9 @@ static bool read_buttons(bool *enable_temperatures)
         if (info.status[i] && ioPadGetData(i, &data) == 0 && data.len) {
             if (data.BTN_CIRCLE)
                 return true;
-            if (data.BTN_CROSS)
+            if (screen_ready && !data.BTN_CROSS)
+                cross_released[i] = true;
+            else if (screen_ready && cross_released[i])
                 *enable_temperatures = true;
         }
     }
@@ -229,7 +232,7 @@ int main(void)
     }
     while (running) {
         sysUtilCheckCallback();
-        if (!running || read_buttons(&sensors_enabled))
+        if (!running || read_buttons(!first_read, &sensors_enabled))
             break;
 
         s64 now = sysGetSystemTime();
