@@ -148,6 +148,26 @@ def extract_iso(command, cancelled):
             raise RuntimeError('7-Zip extraction failed: ' + log.read().decode(errors='replace'))
 
 
+def find_extracted_game(root: Path, cancelled=None) -> Path:
+    """Find the single game folder even when the image has a wrapper directory."""
+    games = []
+    for directory, children, _ in os.walk(root, followlinks=False):
+        check_cancelled(cancelled)
+        parent = Path(directory)
+        for name in children[:]:
+            child = parent / name
+            if child.is_symlink() or getattr(child, 'is_junction', lambda: False)():
+                children.remove(name)
+            elif name.upper() == 'PS3_GAME':
+                children.remove(name)
+                games.append(child)
+    if len(games) != 1:
+        if not games:
+            raise ValueError('The extracted ISO has no PS3_GAME folder. Check that this is an extractable PS3 disc image.')
+        raise ValueError('The ISO contains multiple PS3_GAME folders. Select the game folder you want to package.')
+    return games[0]
+
+
 def next_workspace(parent: str | Path, source: str | Path, *, timestamp: str | None = None) -> Path:
     """Find a fresh child staging directory under a reusable parent.
 
@@ -218,9 +238,8 @@ def stage_conversion(source: str | Path, helper: str | Path, destination: str | 
             extract_dir.mkdir()
             command = [str(ex),'x','-y',f'-o{extract_dir}',str(src)]
             extract_iso(command, cancelled)
-            # Typical ISO contains PS3_GAME at disc root.
-            game = extract_dir / 'PS3_GAME'
-            _progress(progress, 'Validating extracted PS3_GAME...')
+            _progress(progress, 'Finding and validating extracted PS3_GAME...')
+            game = find_extracted_game(extract_dir, cancelled)
             info = inspect_game(game)
             _progress(progress, 'Moving game data into workspace...')
             shutil.move(str(game),str(work / 'PS3_GAME'))

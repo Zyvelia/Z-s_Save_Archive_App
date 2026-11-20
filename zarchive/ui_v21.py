@@ -436,6 +436,7 @@ class Window(V20Window):
                 action.triggered.disconnect()
                 action.triggered.connect(lambda:ConverterDialog(self).exec())
         menu.addSeparator()
+        menu.addAction('ISO → PKG (Retail2Pkg)', lambda: PackageDialog(self, disc_only=True).exec())
         menu.addAction('PS3 PKG Builder (Local / FTP)',lambda:PackageDialog(self).exec())
 
 def main():

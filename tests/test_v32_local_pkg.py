@@ -105,8 +105,8 @@ class LocalPKGTests(unittest.TestCase):
 
         def extract(command, cancelled):
             destination = Path(next(arg[2:] for arg in command if arg.startswith('-o')))
-            game = destination / 'PS3_GAME'
-            game.mkdir()
+            game = destination / 'Disc Backup' / 'PS3_GAME'
+            game.mkdir(parents=True)
             write_sfo(game / 'PARAM.SFO')
 
         def builder(command, **kwargs):
