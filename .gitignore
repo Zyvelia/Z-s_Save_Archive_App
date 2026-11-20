@@ -7,3 +7,6 @@ installer_output/
 ArchiveData/
 portable.flag
 /ps3-stats/PS3_Stats.*
+.archive-update.lock
+.archive-update-*/
+.update-backups/

@@ -104,3 +104,11 @@ The PS3 PKG Builder shows upload percentage, recent throughput and ETA once enou
 The standalone XMB app shows CELL and RSX temperatures and free internal storage. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
 The [downloads folder](downloads/) contains the PS3 Stats preview package, the Save Archive v3.6.2 desktop source ZIP, and SHA-256 checksums.
+
+### Update the Windows source folder
+
+Close Save Archive and double-click **Update_Archive.bat** in the source folder. The updater downloads the desktop ZIP listed in `downloads/SHA256SUMS.txt`, checks its SHA-256, and updates the source in place. It leaves archive data and local settings alone. Previous copies of changed source files go into `.update-backups`.
+
+For an older source ZIP, download [update_archive.py](update_archive.py) once, put it next to `main.py`, and run `py -3 update_archive.py` from that directory. The update installs the batch launcher. If you cloned the repository with Git, use `git pull`. For a packaged Windows EXE, rebuild it after updating the source.
+
+When publishing a desktop update, use a fresh versioned source ZIP and update its single desktop entry in `downloads/SHA256SUMS.txt` in the same commit. Keep `update_archive.py` and `Update_Archive.bat` in the ZIP.
