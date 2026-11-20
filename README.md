@@ -116,3 +116,7 @@ When publishing a desktop update, use a fresh versioned source ZIP and update it
 ### View PS3 temperatures on your PC
 
 On the same LAN as a PS3 running webMAN MOD with its web server available, open **PS3 Console → Live Temperatures**. Enter the PS3’s IP address and choose **Start monitoring**. The app reads CELL and RSX temperatures from webMAN MOD every five seconds until you stop or close the window. The console’s Temperature Information menu and the PS3 Stats PKG can stay closed.
+
+### Controller Tester homebrew
+
+The [Controller Tester](ps3-controller-tester/) shows live stick coordinates, button presses, trigger pressure where supported, and a three-second drift check. [Download the PS3 package](downloads/Controller_Tester.pkg).

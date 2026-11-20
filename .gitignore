@@ -10,3 +10,4 @@ portable.flag
 .archive-update.lock
 .archive-update-*/
 .update-backups/
+/ps3-controller-tester/Controller_Tester.*
