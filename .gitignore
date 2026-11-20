@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv*/
+build/
+dist/
+installer_output/
+ArchiveData/
+portable.flag
+/ps3-stats/PS3_Stats.*

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "example-pc-json",
+  "name": "Example PC JSON Save Editor",
+  "game": "Example Game",
+  "platforms": ["PC"],
+  "file": "save.json",
+  "fields": [
+    {"key": "money", "type": "integer", "min": 0, "max": 999999},
+    {"key": "level", "type": "integer", "min": 1, "max": 100},
+    {"key": "name", "type": "string", "max_length": 80},
+    {"key": "unlocked", "type": "boolean"}
+  ]
+}
