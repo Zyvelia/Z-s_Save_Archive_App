@@ -10,7 +10,9 @@ import shutil
 import subprocess
 import sys
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 from .converter_output_v21 import inspect_conversion_output, validate_pkg
 from .iso_converter_v20 import TITLE_ID, safe_copy_tree, stage_conversion
 
@@ -37,6 +39,30 @@ def inspect_retail2pkg_folder(folder: str | Path) -> dict:
     return {'folder': str(root), 'helper': str(root / 'CFW2OFW_Helper.exe'),
             'batch': str(root / 'Retail2Pkg.bat'), 'files': [name for name in (*REQUIRED_FILES, *OPTIONAL_FILES) if (root / name).is_file()],
             'warning': 'Retail2Pkg.bat moves and deletes folders. Never run it inside your original source or conversion workspace.'}
+
+
+def unpack_retail2pkg_kit(package: Path, destination: Path) -> None:
+    """Copy tool files from a ZIP root or a single enclosing toolkit folder."""
+    names = {name.casefold(): name for name in (*REQUIRED_FILES, *OPTIONAL_FILES)}
+    with ZipFile(package) as archive:
+        tools = {}
+        for member in archive.infolist():
+            path = PurePosixPath(member.filename)
+            if member.is_dir() or path.name.casefold() not in names:
+                continue
+            if path.is_absolute() or '..' in path.parts or len(path.parts) > 2:
+                raise ValueError('Expected Retail2Pkg files at the ZIP root or in one toolkit folder.')
+            entries = tools.setdefault(path.parent, {})
+            name = names[path.name.casefold()]
+            if name in entries or member.file_size > 64 * 1024**2:
+                raise ValueError(f'Duplicate or oversized toolkit file in ZIP: {name}')
+            entries[name] = member
+        complete = [entries for entries in tools.values() if all(name in entries for name in REQUIRED_FILES)]
+        if len(complete) != 1:
+            raise ValueError('The ZIP must contain one complete Retail2Pkg toolkit with Retail2Pkg.bat and its companion tools.')
+        for name, member in complete[0].items():
+            with archive.open(member) as source, (destination / name).open('xb') as target:
+                shutil.copyfileobj(source, target)
 
 
 def prepare_retail2pkg_handoff(workspace: str | Path, tool_folder: str | Path,
@@ -131,6 +157,12 @@ def prepare_local_batch(workspace: str | Path, tool_folder: str | Path,
     """Prepare a runnable copy of the selected Retail2Pkg kit and game."""
     source = Path(workspace).expanduser().resolve(strict=True)
     kit = Path(tool_folder).expanduser().resolve(strict=True)
+    if kit.is_file() and kit.suffix.lower() == '.zip':
+        if progress is not None:
+            progress(f'Unpacking Retail2Pkg tools from {kit.name}…')
+        with TemporaryDirectory(prefix='retail2pkg-kit-') as scratch:
+            unpack_retail2pkg_kit(kit, Path(scratch))
+            return prepare_local_batch(source, scratch, output_folder, extractor=extractor, progress=progress)
     output = Path(output_folder).expanduser().resolve(strict=True)
     if not output.is_dir() or output.is_symlink():
         raise ValueError('Select an existing normal folder for local PKG output')
@@ -139,6 +171,10 @@ def prepare_local_batch(workspace: str | Path, tool_folder: str | Path,
             raise ValueError('The PKG output folder must be separate from the conversion workspace and toolkit')
     # Isolated stage is never reused, avoiding accidental deletion of earlier builds.
     stage = output / ('Retail2Pkg_Build_' + uuid.uuid4().hex[:12])
+    if progress is not None:
+        progress(f'Checking Retail2Pkg toolkit: {kit}')
+        progress(f'Working folder: {stage}')
+        progress(f'Output folder: {output} ({shutil.disk_usage(output).free / 1024**3:.1f} GiB free)')
     toolkit = inspect_retail2pkg_folder(kit)
     if (source / 'conversion_manifest.json').is_file():
         prepare_retail2pkg_handoff(source, kit, stage)
@@ -176,7 +212,7 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
     command = ['cmd.exe', '/d', '/c', 'call', 'Retail2Pkg.bat']
     invoke = runner or subprocess.run
     if progress is not None:
-        progress(f'Running Retail2Pkg.bat in {stage}. Follow prompts in its console.')
+        progress('Starting Retail2Pkg.bat. Watch its Windows console for conversion progress and any key prompts.')
     try:
         if runner is None:
             # This batch can pause, prompt via XCOPY, or open PS3Merge.
@@ -194,6 +230,8 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
                             timeout=timeout, check=False)
     except Exception as exc:
         raise RuntimeError(f'{exc}\nStaging folder: {stage}') from exc
+    if progress is not None:
+        progress(f'Retail2Pkg.bat exited with code {result.returncode}. Checking for new PKG files…')
     log = ((result.stdout or '') + '\n' + (result.stderr or ''))[-30000:]
     packages = sorted(path for path in stage.rglob('*')
                       if path.suffix.lower() == '.pkg' and path not in previous_packages)
@@ -208,6 +246,8 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
             if dest.exists():
                 # Preserve previous output and never silently replace it.
                 raise FileExistsError(f'Output package already exists: {dest}; source remains in {stage}')
+            if progress is not None:
+                progress(f'Copying {pkg.name} ({pkg.stat().st_size / 1024**2:.1f} MiB) to the output folder.')
             # Exclusive create prevents overwrite even if files appear mid-build.
             with pkg.open('rb') as src, dest.open('xb') as dst:
                 shutil.copyfileobj(src, dst, 1024*1024)

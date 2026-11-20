@@ -81,7 +81,7 @@ Open **PS3 Tools → PS3 PKG Builder (Local / FTP)**. Choose a completed convers
 
 ### Run Retail2Pkg with disc input
 
-Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose a disc ISO or PS3_GAME folder and select the toolkit containing your working `Retail2Pkg.bat`. Choose an output folder and click **Build PKGs with Retail2Pkg.bat**. The batch handles conversion and packaging on a copy. Follow any prompts in its Windows console, including its final key prompt. Finished PKGs are copied to the chosen output folder. To run the batch by hand from the general PKG builder, click **Prepare batch folder** and then **Open batch folder**. Run the staged batch beside the extracted `PS3_GAME` folder. For ISO input, choose `7z.exe` in the builder if it cannot find 7-Zip automatically.
+Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose a disc ISO or PS3_GAME folder and select the toolkit folder or ZIP containing your working `Retail2Pkg.bat`. Choose an output folder and click **Build PKGs with Retail2Pkg.bat**. The batch handles conversion and packaging on a copy. Follow any prompts in its Windows console, including its final key prompt. Finished PKGs are copied to the chosen output folder. To run the batch by hand from the general PKG builder, click **Prepare batch folder** and then **Open batch folder**. Run the staged batch beside the extracted `PS3_GAME` folder. For ISO input, choose `7z.exe` in the builder if it cannot find 7-Zip automatically.
 
 ### If conversion leaves a BLUS or NPUB folder
 
@@ -112,7 +112,7 @@ The PS3 PKG Builder shows upload percentage, recent throughput and ETA once enou
 
 The standalone XMB app shows CELL and RSX temperatures when enabled. Version 1.3 checks free internal storage when you press Square. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
-Download the [Save Archive v3.6.9 desktop source ZIP](downloads/Z_Save_Archive_v3.6.9_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
+Download the [Save Archive v3.6.10 desktop source ZIP](downloads/Z_Save_Archive_v3.6.10_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
 
 ### Update the Windows source folder
 

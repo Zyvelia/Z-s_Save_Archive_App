@@ -78,7 +78,7 @@ class LocalPKGTests(unittest.TestCase):
         extractor = self.kit / '7z.exe'
         extractor.touch()
 
-        def extract(command, cancelled):
+        def extract(command, cancelled, progress):
             self.assertEqual(Path(command[0]), extractor)
             self.assertEqual(Path(command[-1]), iso)
             destination = Path(next(arg[2:] for arg in command if arg.startswith('-o')))
@@ -103,7 +103,7 @@ class LocalPKGTests(unittest.TestCase):
         extractor.touch()
         messages = []
 
-        def extract(command, cancelled):
+        def extract(command, cancelled, progress):
             destination = Path(next(arg[2:] for arg in command if arg.startswith('-o')))
             game = destination / 'Disc Backup' / 'PS3_GAME'
             game.mkdir(parents=True)
@@ -122,6 +122,23 @@ class LocalPKGTests(unittest.TestCase):
                                         runner=builder, progress=messages.append)
         self.assertTrue(result['success'])
         self.assertEqual(result['packages'], [str(self.out / 'Disc.pkg')])
+
+    def test_zip_toolkit_preserves_the_batch_bytes(self):
+        from test_v20 import write_sfo
+        from zipfile import ZipFile
+
+        disc = self.work.parent / 'disc' / 'PS3_GAME'
+        disc.mkdir(parents=True)
+        write_sfo(disc / 'PARAM.SFO')
+        package = self.kit.parent / 'Retail2Pkg.zip'
+        with ZipFile(package, 'w') as archive:
+            for tool in self.kit.iterdir():
+                archive.write(tool, 'Retail2Pkg/' + tool.name)
+        result = prepare_local_batch(disc, package, self.out)
+        staged = Path(result['staging'])
+        self.assertTrue((staged / 'PS3_GAME' / 'PARAM.SFO').is_file())
+        self.assertEqual((staged / 'Retail2Pkg.bat').read_bytes(),
+                         (self.kit / 'Retail2Pkg.bat').read_bytes())
 
     def test_reject_output_inside_source(self):
         with self.assertRaisesRegex(ValueError, 'separate'):

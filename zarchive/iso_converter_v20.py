@@ -122,13 +122,15 @@ def safe_copy_tree(src: Path, dest: Path, cancelled=None) -> None:
                     copy_function=lambda source, target: copy_staging_file(source, target, cancelled))
 
 
-def extract_iso(command, cancelled):
+def extract_iso(command, cancelled, progress=None):
     # A file keeps large extractor logs out of memory and avoids pipe deadlocks.
     with TemporaryFile() as log, subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT
     ) as process:
         from time import monotonic
-        deadline = monotonic() + 3600
+        started = monotonic()
+        deadline = started + 3600
+        next_update = started + 10
         try:
             while True:
                 check_cancelled(cancelled)
@@ -136,8 +138,13 @@ def extract_iso(command, cancelled):
                     code = process.wait(timeout=0.2)
                     break
                 except subprocess.TimeoutExpired:
-                    if monotonic() >= deadline:
+                    now = monotonic()
+                    if now >= deadline:
                         raise RuntimeError('7-Zip extraction timed out after one hour.')
+                    if now >= next_update:
+                        elapsed = int(now - started)
+                        _progress(progress, f'7-Zip is still extracting ({elapsed // 60}:{elapsed % 60:02d} elapsed).')
+                        next_update = now + 10
         except BaseException:
             process.kill()
             process.wait()
@@ -233,15 +240,17 @@ def stage_conversion(source: str | Path, helper: str | Path, destination: str | 
         staged_tool = work / tool.name
         if not staged_tool.exists():raise ValueError('Converter executable was not staged')
         if info is None:
-            _progress(progress, 'Extracting ISO with 7-Zip (may take several minutes)...')
+            _progress(progress, f'Extracting {src.name} ({src.stat().st_size / 1024**3:.2f} GiB) with 7-Zip.')
+            _progress(progress, f'7-Zip executable: {ex}')
             extract_dir = work / 'extracted'
             extract_dir.mkdir()
             command = [str(ex),'x','-y',f'-o{extract_dir}',str(src)]
-            extract_iso(command, cancelled)
+            extract_iso(command, cancelled, progress)
             _progress(progress, 'Finding and validating extracted PS3_GAME...')
             game = find_extracted_game(extract_dir, cancelled)
             info = inspect_game(game)
-            _progress(progress, 'Moving game data into workspace...')
+            _progress(progress, f"Found {info['title']} [{info['title_id']}] in {game.relative_to(extract_dir)}.")
+            _progress(progress, 'Placing PS3_GAME beside the toolkit files…')
             shutil.move(str(game),str(work / 'PS3_GAME'))
             shutil.rmtree(extract_dir)
         else:

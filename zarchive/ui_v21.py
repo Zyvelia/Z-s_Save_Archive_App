@@ -3,7 +3,7 @@ from __future__ import annotations
 import os, sys
 from time import monotonic
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal, QUrl, Qt
+from PySide6.QtCore import QThread, Signal, QUrl, Qt, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
     QPushButton,QFileDialog,QMessageBox,QFormLayout,QPlainTextEdit,QInputDialog,QTreeWidget,QTreeWidgetItem,QProgressBar)
@@ -38,6 +38,9 @@ class PackageDialog(QDialog):
         self.extractor = QLineEdit(extractor)
         self.extractor.setPlaceholderText('Auto-detect if blank')
         self.staging = None
+        self.build_timer = QTimer(self)
+        self.build_timer.setInterval(1000)
+        self.build_timer.timeout.connect(self.update_build_elapsed)
         outer=QVBoxLayout(self)
         title=QLabel('Create PKGs on your PC — FTP upload is optional')
         title.setStyleSheet('font-size:17px;font-weight:600');outer.addWidget(title)
@@ -60,7 +63,11 @@ class PackageDialog(QDialog):
         form.addRow(iso_button)
         add('7-Zip for ISO input', self.extractor,
             lambda: self.pick_file(self.extractor, 'Executables (*.exe)'))
-        add('Retail2Pkg tools folder',self.retail_folder,self.pick_retail_folder)
+        add('Retail2Pkg toolkit', self.retail_folder, self.pick_retail_folder)
+        if disc_only:
+            toolkit_zip_button = QPushButton('Choose Retail2Pkg ZIP…')
+            toolkit_zip_button.clicked.connect(lambda: self.pick_file(self.retail_folder, 'ZIP archives (*.zip)'))
+            form.addRow(toolkit_zip_button)
         add('Local PKG output folder',self.local_output,self.pick_output_folder)
         advanced_row = form.rowCount()
         add('PKG builder (.exe)',self.builder,lambda:self.pick_file(self.builder,'Executables (*.exe)'))
@@ -115,7 +122,7 @@ class PackageDialog(QDialog):
         tools=self.retail_folder.text().strip()
         output=self.local_output.text().strip()
         if not workspace or not tools or not output:
-            return QMessageBox.warning(self,'Missing folders','Select game input, Retail2Pkg folder and local output folder. FTP is not required.')
+            return QMessageBox.warning(self,'Missing folders','Select game input, a Retail2Pkg folder or ZIP, and a local output folder. FTP is not required.')
         if self.disc_only:
             source = Path(workspace)
             if source.suffix.lower() != '.iso' and not (
@@ -126,12 +133,19 @@ class PackageDialog(QDialog):
             'This creates a NEW independent staging copy, then executes Retail2Pkg.bat inside it.\n\n'
             'The third-party batch moves and deletes files inside the staging copy and may take a long time. '
             'Watch the Windows console for prompts and close it using the batch’s final key prompt. Continue?') != QMessageBox.StandardButton.Yes:return
-        self.log.appendPlainText('Preparing the Retail2Pkg batch folder…')
+        self.log.appendPlainText(f'Build input: {workspace}\nChecking input and destination…')
+        self.build_started = monotonic()
+        self.update_build_elapsed()
+        self.build_timer.start()
         task = prepare_local_batch if prepare_only else build_pkgs_locally
         worker = TaskWorker(task, workspace, tools, output,
                             extractor=self.extractor.text().strip() or None)
         worker.kwargs['progress'] = worker.message.emit
         self.begin(worker)
+
+    def update_build_elapsed(self):
+        seconds = int(monotonic() - self.build_started)
+        self.transfer_status.setText(f'Retail2Pkg operation · {seconds // 60}:{seconds % 60:02d} elapsed')
 
     def open_stage(self):
         if self.staging and not QDesktopServices.openUrl(QUrl.fromLocalFile(self.staging)):
@@ -142,7 +156,7 @@ class PackageDialog(QDialog):
         try:info=inspect_retail2pkg_folder(folder)
         except Exception as exc:return QMessageBox.warning(self,'Invalid Retail2Pkg folder',str(exc))
         self.retail_folder.setText(info['folder'])
-        self.log.appendPlainText('Retail2Pkg tools found. The converter and PKG batch will not execute without separate approval.')
+        self.log.appendPlainText(f"Found {len(info['files'])} Retail2Pkg toolkit files in {info['folder']}. Choose an input and output folder to start.")
     def retail_handoff(self):
         if not self.retail_folder.text().strip():return QMessageBox.warning(self,'Missing tools','Select an extracted Retail2Pkg folder first.')
         if not self.workspace.text().strip():return QMessageBox.warning(self,'Missing workspace','Select your completed conversion workspace first.')
@@ -181,6 +195,9 @@ class PackageDialog(QDialog):
         self.worker.done.connect(self.finished);self.worker.error.connect(self.failed);self.worker.finished.connect(self.enable_controls)
         self.worker.start()
     def enable_controls(self):
+        if self.build_timer.isActive():
+            self.build_timer.stop()
+            self.transfer_status.clear()
         for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn,self.prepare_batch_btn):button.setEnabled(True)
     def finished(self,result):
         if 'staging' in result:
