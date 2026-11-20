@@ -33,13 +33,7 @@ From project root: `python -m unittest discover -s tests -q` and `python -m comp
 
 Run `Build_Windows.bat` to create a PyInstaller one-folder EXE. Then run `Build_Installer.bat` with Inno Setup 6 installed to create a per-user installer. Read `BUILDING.md` for details. Tools are now grouped into categorized submenus, with a Find tool action at the top.
 
-## TrueAncestor handoff update (v2.5 integration)
-The existing **PS3 Package Builder & FTP Transfer** dialog now has **Prepare TrueAncestor handoff**. After CFW2OFW succeeds, choose a new destination folder. The app copies only detected converted game folders to `TrueAncestor_Handoff/game/`, writes a manifest and instructions, and never modifies the ISO. It intentionally does **not** bundle or run TrueAncestor; supported input layout and packaging commands vary by edition. Use **TrueAncestor PKG Repacker** for eligible installable packages, not **TrueAncestor BACKUP Retailer**, which serves backup injection. Once you've generated a valid `.pkg`, copy it into the conversion workspace for the existing PKG inspection/upload workflow. No game compatibility guarantee.
-
-References: https://consolemods.org/wiki/PS3:CFW2OFW_Helper and https://consolemods.org/wiki/PS3:TrueAncestor . The original CFW2OFW Helper repository is archived and describes itself as obsolete.
-
-
-### Integrated app icon
+## Integrated app icon
 The generated violet Z archive logo is now included under `assets/` and connected to the PySide6 main window, PyInstaller EXE, and Inno Setup installer. No save/archive data files were changed.
 
 
@@ -71,23 +65,6 @@ To run: `python main.py` (install `requirements.txt` first). To build on Windows
 The main sidebar now uses Dashboard, Game Library, Saves & Backups, PS3 Console, Save Editor, PS3 Tools, Releases, and Settings. The Tools dropdown and duplicate classic sidebar are hidden. Existing actions retain their callbacks and live under the relevant section. Find library organization actions under Game Library → Organize, and less frequently needed/experimental options under each section’s advanced toggle. Existing source, FTP encoding fix, and one-click build are preserved. See `RELEASE_NOTES_v3.0.md`. Run `Build_All.bat` to create the v3.0 EXE and Inno installer on Windows.
 
 
-## v3.1 Retail2Pkg folder integration
-See `RELEASE_NOTES_v3.1.md` for safe tool-folder selection and separate PKG handoff instructions.
-
-
-## v3.2 Local PKG Builder (no FTP required)
-Open **PS3 Tools → PS3 PKG Builder (Local / FTP)**. Choose a completed conversion workspace, your extracted Retail2Pkg tools directory, and a separate output folder. Click **Build PKGs Locally (No FTP)** and confirm running the third-party batch in an isolated staging copy. Finished PKGs with a recognizable header are copied to the output directory; they are not installed on the console. See `RELEASE_NOTES_v3.2.md`. `Build_All.bat` still builds the Windows EXE followed by the Inno installer.
-
-
-### Run Retail2Pkg with disc input
-
-Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose a disc ISO or PS3_GAME folder and select the toolkit folder or ZIP containing your working `Retail2Pkg.bat`. Choose an output folder and click **Build PKGs with Retail2Pkg.bat**. The batch handles conversion and packaging on a copy. Follow any prompts in its Windows console, including its final key prompt. Finished PKGs are copied to the chosen output folder. To run the batch by hand from the general PKG builder, click **Prepare batch folder** and then **Open batch folder**. Run the staged batch beside the extracted `PS3_GAME` folder. For ISO input, choose `7z.exe` in the builder if it cannot find 7-Zip automatically.
-
-### If conversion leaves a BLUS or NPUB folder
-
-The ISO → XMB Assistant runs CFW2OFW Helper and puts its results into a workspace. Open that workspace in **Inspect output / Build PKG / Upload to PS3** to see what was produced. Retail2Pkg needs a converted NP title folder and its matching disc-ID patch folder. If only one is present, check the helper's output and the requirements for that title before running the PKG builder. Select the workspace containing `conversion_manifest.json` and choose a separate folder for the finished PKGs.
-
-
 ## v3.5 — Starter tags and save provenance
 The save inspector includes a **Choose Starter Tags** dialog (suggested options, without forcing them onto existing records). Custom tags and the existing three save categories remain unchanged. Each archived save may also have user-entered origin type, source/creator, optional HTTP(S) URL, and notes. Existing archives migrate by adding optional columns, without altering save files. Provenance is unverified user-supplied metadata. ZIP backups include origin metadata; public site export does not expose it.
 
@@ -96,7 +73,7 @@ In **PS3 Tools → PS3 ISO → XMB Assistant**, choose your workspace **parent**
 
 ### Conversion workspace history (v3.6.1)
 
-In the PS3 ISO → XMB Conversion Assistant, choose **Workspace history…** to reopen a run under the selected workspace parent. The list shows its game, date, size, and recorded status. Open the run folder, inspect its output, or open the PKG builder for that specific run.
+In the PS3 ISO → XMB Conversion Assistant, choose **Workspace history…** to reopen a run under the selected workspace parent. The list shows its game, date, size, and recorded status. Open the run folder or inspect its output.
 
 The assistant checks available space before copying. If the drive has less space than the conservative estimate, it asks whether to continue. **Cancel staging** stops copying or 7-Zip extraction and retains any partial workspace for review. A converter exit status records what the process reported. Use **Inspect output** to check which files it produced.
 
@@ -106,13 +83,13 @@ Run `Build_All.bat` for the Windows EXE and installer. The installer filename us
 
 **Copy troubleshooting report** in the PS3 ISO → XMB Conversion Assistant copies the current or failed step, any converter exit code, and recent log lines. **Hide paths in report** starts enabled and omits log lines containing possible paths. Review the report before sharing it.
 
-The PS3 PKG Builder shows upload percentage, recent throughput and ETA once enough data is available. It checks the uploaded size before finalizing the package. If the server refuses the size check or reports a mismatch, the upload fails without publishing the final filename.
+Open **PS3 PKG Inspect and Upload** to inspect an existing package or upload it over FTP. The tool shows upload percentage, recent throughput and ETA once enough data is available. It checks the uploaded size before finalizing the package. If the server refuses the size check or reports a mismatch, the upload fails without publishing the final filename.
 
 ### PS3 Stats homebrew
 
 The standalone XMB app shows CELL and RSX temperatures when enabled. Version 1.3 checks free internal storage when you press Square. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
-Download the [Save Archive v3.6.10 desktop source ZIP](downloads/Z_Save_Archive_v3.6.10_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
+Download the [Save Archive v3.6.11 desktop source ZIP](downloads/Z_Save_Archive_v3.6.11_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
 
 ### Update the Windows source folder
 

@@ -85,7 +85,7 @@ class AppDataDialog(QDialog):
 class Window(ExistingWindow):
     def __init__(self,root):
         super().__init__(root)
-        self.setWindowTitle("Z's Save Archive • v3.6.10")
+        self.setWindowTitle("Z's Save Archive • v3.6.11")
         self.resize(1540,930);self.setMinimumSize(1060,720)
         self.classic_content=self.takeCentralWidget()
         # All existing tools retain their QAction callbacks, even though the menu is hidden.
@@ -213,7 +213,7 @@ class Window(ExistingWindow):
         captions={
             'Saves & Backups':'Restore, snapshot, compare and protect your archived saves.',
             'Save Editor':'Edit supported saves and inspect metadata safely.',
-            'PS3 Tools':'Homebrew, PKG management and ISO conversion in one place.',
+            'PS3 Tools':'Homebrew, existing PKGs, and ISO conversion.',
             'Releases':'GitHub publishing, release preparation and public catalogs.',
             'Settings':'Appearance, maintenance and advanced diagnostics.',
             'Game Library':'Optional organization tools; normal browsing stays in Game Library.',

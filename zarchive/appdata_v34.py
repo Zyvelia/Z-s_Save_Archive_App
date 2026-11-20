@@ -62,7 +62,7 @@ class AppPaths:
             if name and os.path.exists(name):os.unlink(name)
 
     def remember_path(self,key,value):
-        if key not in {'retail2pkg','helper','extractor','source','workspace','pkg_output','ftp_downloads','archive_root'}:
+        if key not in {'helper','extractor','source','workspace','ftp_downloads','archive_root'}:
             raise ValueError('Unsupported path key')
         settings=self.load_settings()
         settings.setdefault('paths',{})[key]=str(value)

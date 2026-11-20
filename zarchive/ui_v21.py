@@ -1,26 +1,23 @@
-"""Opt-in post-conversion PKG inspection, external builder, and PS3 upload UI."""
+"""Opt-in post-conversion PKG inspection, and PS3 upload UI."""
 from __future__ import annotations
 import os, sys
 from time import monotonic
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal, QUrl, Qt, QTimer
+from PySide6.QtCore import QThread, Signal, QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
-    QPushButton,QFileDialog,QMessageBox,QFormLayout,QPlainTextEdit,QInputDialog,QTreeWidget,QTreeWidgetItem,QProgressBar)
+    QPushButton,QFileDialog,QMessageBox,QFormLayout,QPlainTextEdit,QTreeWidget,QTreeWidgetItem,QProgressBar)
 from .ui_v20 import Window as V20Window, ConverterDialog as V20Dialog
 from .ui_v04 import STYLE
 from .editor_v18 import ArchiveV18
-from .converter_output_v21 import (inspect_conversion_output,run_builder,upload_pkg_ftp,validate_pkg)
-from .trueancestor_v25 import prepare_trueancestor
+from .converter_output_v21 import (inspect_conversion_output,upload_pkg_ftp,validate_pkg)
 from .workspace_history import workspace_history
 from .console_v27 import summarize_transfer
-from .retail2pkg_v31 import inspect_retail2pkg_folder, prepare_retail2pkg_handoff, build_pkgs_locally, prepare_local_batch
 
 class TaskWorker(QThread):
     done=Signal(object)
     error=Signal(str)
     progress=Signal(object,object)
-    message=Signal(str)
     def __init__(self,fn,*args,**kwargs):
         super().__init__();self.fn=fn;self.args=args;self.kwargs=kwargs
     def run(self):
@@ -28,203 +25,95 @@ class TaskWorker(QThread):
         except Exception as e:self.error.emit(str(e))
 
 class PackageDialog(QDialog):
-    def __init__(self,parent=None,workspace='',retail_folder='',extractor='', *, disc_only=False):
-        super().__init__(parent);self.setWindowTitle('PS3 PKG Builder — Local or FTP');self.resize(950,700)
-        self.worker=None;self.last_report=None
-        self.disc_only = disc_only
-        if disc_only:
-            self.setWindowTitle('Build PS3 PKGs from disc input')
-            self.resize(790, 485)
-        self.extractor = QLineEdit(extractor)
-        self.extractor.setPlaceholderText('Auto-detect if blank')
-        self.staging = None
-        self.build_timer = QTimer(self)
-        self.build_timer.setInterval(1000)
-        self.build_timer.timeout.connect(self.update_build_elapsed)
-        outer=QVBoxLayout(self)
-        title=QLabel('Create PKGs on your PC — FTP upload is optional')
-        title.setStyleSheet('font-size:17px;font-weight:600');outer.addWidget(title)
-        note=QLabel('Select a disc ISO, a PS3_GAME folder, or a conversion workspace, and your Retail2Pkg tools. Build PKGs into a local folder without connecting to your PS3. The optional FTP upload is a separate action and never installs packages.')
-        note.setWordWrap(True);outer.addWidget(note)
-        form=QFormLayout();outer.addLayout(form)
-        self.workspace=QLineEdit(workspace)
-        self.retail_folder=QLineEdit(retail_folder);self.local_output=QLineEdit();self.local_output.setPlaceholderText("Choose where finished .pkg files should be saved")
-        self.builder=QLineEdit();self.args=QLineEdit();self.pkg=QLineEdit()
-        self.host=QLineEdit();self.host.setPlaceholderText('192.168.1.50')
-        self.user=QLineEdit('anonymous');self.password=QLineEdit();self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        def add(label,field,action=None):
-            if action:
-                h=QHBoxLayout();h.addWidget(field,1)
-                btn=QPushButton('Browse…');btn.clicked.connect(action);h.addWidget(btn);form.addRow(label,h)
-            else:form.addRow(label,field)
-        add('Disc ISO or PS3_GAME' if disc_only else 'Game input / workspace', self.workspace, self.pick_workspace)
-        iso_button = QPushButton('Choose disc ISO…')
-        iso_button.clicked.connect(lambda: self.pick_file(self.workspace, 'ISO (*.iso)'))
-        form.addRow(iso_button)
-        add('7-Zip for ISO input', self.extractor,
-            lambda: self.pick_file(self.extractor, 'Executables (*.exe)'))
-        add('Retail2Pkg toolkit', self.retail_folder, self.pick_retail_folder)
-        if disc_only:
-            toolkit_zip_button = QPushButton('Choose Retail2Pkg ZIP…')
-            toolkit_zip_button.clicked.connect(lambda: self.pick_file(self.retail_folder, 'ZIP archives (*.zip)'))
-            form.addRow(toolkit_zip_button)
-        add('Local PKG output folder',self.local_output,self.pick_output_folder)
-        advanced_row = form.rowCount()
-        add('PKG builder (.exe)',self.builder,lambda:self.pick_file(self.builder,'Executables (*.exe)'))
-        add('Builder arguments',self.args)
-        add('Produced PKG',self.pkg,lambda:self.pick_file(self.pkg,'PS3 packages (*.pkg)'))
-        ftp_label=QLabel('Optional — FTP upload only');ftp_label.setStyleSheet('font-weight:600');form.addRow(ftp_label)
-        add('PS3 IP / hostname',self.host)
-        add('FTP username',self.user)
-        add('FTP password (never saved)',self.password)
-        self.log=QPlainTextEdit();self.log.setReadOnly(True);outer.addWidget(self.log,1)
+    def __init__(self, parent=None, workspace=''):
+        super().__init__(parent)
+        self.setWindowTitle('PS3 PKG Inspect and Upload')
+        self.resize(790, 475)
+        self.worker = None
+        self.workspace = workspace
+        self.upload_active = False
+        outer = QVBoxLayout(self)
+        form = QFormLayout()
+        outer.addLayout(form)
+
+        self.pkg = QLineEdit()
+        browse = QPushButton('Browse…')
+        browse.clicked.connect(lambda: self.pick_file(self.pkg, 'PS3 packages (*.pkg)'))
+        row = QHBoxLayout()
+        row.addWidget(self.pkg, 1)
+        row.addWidget(browse)
+        form.addRow('Existing PKG', row)
+        self.host = QLineEdit()
+        self.user = QLineEdit('anonymous')
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow('PS3 IP / hostname', self.host)
+        form.addRow('FTP username', self.user)
+        form.addRow('FTP password', self.password)
+
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        outer.addWidget(self.log, 1)
         self.transfer_progress = QProgressBar()
         self.transfer_progress.setRange(0, 100)
         self.transfer_progress.hide()
         outer.addWidget(self.transfer_progress)
         self.transfer_status = QLabel()
         outer.addWidget(self.transfer_status)
-        self.upload_active = False
-        buttons=QHBoxLayout();outer.addLayout(buttons)
-        self.inspect_btn=QPushButton('Inspect output');self.inspect_btn.clicked.connect(self.inspect);buttons.addWidget(self.inspect_btn)
-        self.ta_btn=QPushButton('Prepare TrueAncestor handoff');self.ta_btn.clicked.connect(self.trueancestor);buttons.addWidget(self.ta_btn)
-        self.retail_btn=QPushButton('Prepare Retail2Pkg handoff');self.retail_btn.clicked.connect(self.retail_handoff);buttons.addWidget(self.retail_btn)
-        self.prepare_batch_btn = QPushButton('Prepare batch folder')
-        self.prepare_batch_btn.clicked.connect(lambda: self.build_local(prepare_only=True))
-        buttons.addWidget(self.prepare_batch_btn)
-        self.open_stage_btn = QPushButton('Open batch folder')
-        self.open_stage_btn.setEnabled(False)
-        self.open_stage_btn.clicked.connect(self.open_stage)
-        buttons.addWidget(self.open_stage_btn)
-        local_buttons=QHBoxLayout();outer.addLayout(local_buttons)
-        self.local_build_btn=QPushButton('Build PKGs Locally (No FTP)');self.local_build_btn.clicked.connect(lambda: self.build_local());local_buttons.addWidget(self.local_build_btn)
-        self.build_btn=QPushButton('Run custom .exe builder');self.build_btn.clicked.connect(self.build);local_buttons.addWidget(self.build_btn)
-        self.upload_btn=QPushButton('Optional: Upload PKG to PS3');self.upload_btn.clicked.connect(self.upload);local_buttons.addWidget(self.upload_btn)
-        close=QPushButton('Close');close.clicked.connect(self.close);local_buttons.addWidget(close)
-        self.log.appendPlainText('Use Build PKGs Locally to save completed packages to your PC. FTP is not necessary.\nFor direct-XMB installable PKGs, TrueAncestor PKG Repacker may be needed after CFW2OFW. Use Prepare TrueAncestor handoff to copy output to a new directory; it does not automatically build a PKG. TrueAncestor BACKUP Retailer is a different workflow.')
-        if disc_only:
-            title.setText('Build PS3 PKGs from disc input')
-            note.setText('The app extracts PS3_GAME from the ISO and runs your Retail2Pkg.bat beside it.')
-            for row in range(advanced_row, form.rowCount()):
-                form.setRowVisible(row, False)
-            for button in (self.inspect_btn, self.ta_btn, self.retail_btn, self.prepare_batch_btn,
-                           self.build_btn, self.upload_btn):
-                button.hide()
-            self.local_build_btn.setText('Build PKGs with Retail2Pkg.bat')
-            self.local_build_btn.setDefault(True)
-            self.log.clear()
 
-    def pick_output_folder(self):
-        folder=QFileDialog.getExistingDirectory(self,'Select local folder for finished PKGs')
-        if folder:self.local_output.setText(folder)
-    def build_local(self, *, prepare_only=False):
-        workspace=self.workspace.text().strip()
-        tools=self.retail_folder.text().strip()
-        output=self.local_output.text().strip()
-        if not workspace or not tools or not output:
-            return QMessageBox.warning(self,'Missing folders','Select game input, a Retail2Pkg folder or ZIP, and a local output folder. FTP is not required.')
-        if self.disc_only:
-            source = Path(workspace)
-            if source.suffix.lower() != '.iso' and not (
-                source.is_dir() and (source.name.upper() == 'PS3_GAME' or (source / 'PS3_GAME').is_dir())
-            ):
-                return QMessageBox.warning(self, 'Disc input required', 'Choose the original ISO or PS3_GAME folder.')
-        if not prepare_only and QMessageBox.question(self,'Build PKGs locally',
-            'This creates a NEW independent staging copy, then executes Retail2Pkg.bat inside it.\n\n'
-            'The third-party batch moves and deletes files inside the staging copy and may take a long time. '
-            'Watch the Windows console for prompts and close it using the batch’s final key prompt. Continue?') != QMessageBox.StandardButton.Yes:return
-        self.log.appendPlainText(f'Build input: {workspace}\nChecking input and destination…')
-        self.build_started = monotonic()
-        self.update_build_elapsed()
-        self.build_timer.start()
-        task = prepare_local_batch if prepare_only else build_pkgs_locally
-        worker = TaskWorker(task, workspace, tools, output,
-                            extractor=self.extractor.text().strip() or None)
-        worker.kwargs['progress'] = worker.message.emit
-        self.begin(worker)
+        buttons = QHBoxLayout()
+        outer.addLayout(buttons)
+        self.inspect_btn = QPushButton('Inspect workspace' if workspace else 'Inspect PKG')
+        self.inspect_btn.clicked.connect(self.inspect)
+        self.upload_btn = QPushButton('Upload PKG to PS3')
+        self.upload_btn.clicked.connect(self.upload)
+        close = QPushButton('Close')
+        close.clicked.connect(self.close)
+        for button in (self.inspect_btn, self.upload_btn, close):
+            buttons.addWidget(button)
 
-    def update_build_elapsed(self):
-        seconds = int(monotonic() - self.build_started)
-        self.transfer_status.setText(f'Retail2Pkg operation · {seconds // 60}:{seconds % 60:02d} elapsed')
+    def package_root(self, package):
+        return self.workspace or Path(package).absolute().parent
 
-    def open_stage(self):
-        if self.staging and not QDesktopServices.openUrl(QUrl.fromLocalFile(self.staging)):
-            QMessageBox.warning(self, 'Folder unavailable', self.staging)
-    def pick_retail_folder(self):
-        folder=QFileDialog.getExistingDirectory(self,'Select extracted Retail2Pkg folder')
-        if not folder:return
-        try:info=inspect_retail2pkg_folder(folder)
-        except Exception as exc:return QMessageBox.warning(self,'Invalid Retail2Pkg folder',str(exc))
-        self.retail_folder.setText(info['folder'])
-        self.log.appendPlainText(f"Found {len(info['files'])} Retail2Pkg toolkit files in {info['folder']}. Choose an input and output folder to start.")
-    def retail_handoff(self):
-        if not self.retail_folder.text().strip():return QMessageBox.warning(self,'Missing tools','Select an extracted Retail2Pkg folder first.')
-        if not self.workspace.text().strip():return QMessageBox.warning(self,'Missing workspace','Select your completed conversion workspace first.')
-        parent=QFileDialog.getExistingDirectory(self,'Choose destination parent for NEW Retail2Pkg handoff')
-        if not parent:return
-        target=str(Path(parent)/'Retail2Pkg_Handoff')
-        if QMessageBox.question(self,'Prepare Retail2Pkg handoff','Copy compatible converted game files and tool executables into a NEW folder?\n\nThis may require multiple GB. The Retail2Pkg.bat script MOVES and DELETES files, so it must only run on the handoff copy.')!=QMessageBox.StandardButton.Yes:return
-        self.begin(TaskWorker(prepare_retail2pkg_handoff,self.workspace.text().strip(),self.retail_folder.text().strip(),target))
-    def pick_workspace(self):
-        p=QFileDialog.getExistingDirectory(self,'Select PS3_GAME, its parent, or a conversion workspace')
-        if p:self.workspace.setText(p)
     def pick_file(self,field,filter):
         p=QFileDialog.getOpenFileName(self,'Select file','',filter)[0]
         if p:field.setText(p)
     def inspect(self):
         try:
-            report=inspect_conversion_output(self.workspace.text().strip());self.last_report=report
-            if report['packages']:
-                self.log.appendPlainText('PS3 PKG files found.')
-            elif report['folders']:
-                self.log.appendPlainText('Conversion folders found. No PKG exists yet. '
-                                         'To package compatible output, select an output folder and click Build PKGs Locally (No FTP).')
+            if self.workspace:
+                report = inspect_conversion_output(self.workspace)
+                folders = ', '.join(item['relative_path'] for item in report['folders'])
+                packages = ', '.join(item['relative_path'] for item in report['packages'])
+                self.log.appendPlainText(f"Game folders: {folders or 'none'}\nPackages: {packages or 'none'}")
+                if report['packages'] and not self.pkg.text().strip():
+                    self.pkg.setText(str(Path(self.workspace) / report['packages'][0]['relative_path']))
             else:
-                self.log.appendPlainText('No converted title folders or PKGs found. Check the CFW2OFW Helper log.')
-            self.log.appendPlainText('Game folders: '+(', '.join(x['relative_path'] for x in report['folders']) or 'none'))
-            self.log.appendPlainText('Packages: '+(', '.join(x['relative_path'] for x in report['packages']) or 'none'))
-            if report['packages'] and not self.pkg.text().strip():
-                self.pkg.setText(str(Path(self.workspace.text().strip())/report['packages'][0]['relative_path']))
-            self.log.appendPlainText(report['warning'])
-        except Exception as e:QMessageBox.warning(self,'Inspection failed',str(e))
-    def begin(self,worker):
-        if self.worker and self.worker.isRunning():return QMessageBox.information(self,'Busy','An operation is already running.')
-        self.worker=worker
-        for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn,self.prepare_batch_btn):button.setEnabled(False)
-        self.worker.message.connect(self.log.appendPlainText)
-        self.worker.done.connect(self.finished);self.worker.error.connect(self.failed);self.worker.finished.connect(self.enable_controls)
-        self.worker.start()
+                package = self.pkg.text().strip()
+                info = validate_pkg(self.package_root(package), package)
+                self.log.appendPlainText(f"{info['filename']} · {info['bytes']:,} bytes · PS3 PKG header found")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, 'Inspection failed', str(exc))
+
+    def begin(self, worker):
+        self.worker = worker
+        self.inspect_btn.setEnabled(False)
+        self.upload_btn.setEnabled(False)
+        worker.done.connect(self.finished)
+        worker.error.connect(self.failed)
+        worker.finished.connect(self.enable_controls)
+        worker.start()
+
     def enable_controls(self):
-        if self.build_timer.isActive():
-            self.build_timer.stop()
-            self.transfer_status.clear()
-        for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn,self.prepare_batch_btn):button.setEnabled(True)
-    def finished(self,result):
-        if 'staging' in result:
-            self.staging = result['staging']
-            self.open_stage_btn.setEnabled(True)
-        if 'staging' in result and 'packages' not in result:
-            self.log.appendPlainText(f"Batch folder ready: {self.staging}\n"
-                                     "Click Open batch folder and run Retail2Pkg.bat there.")
-        elif 'output_folder' in result:
-            self.log.appendPlainText('Local PKG build: '+('Completed' if result['success'] else 'No valid packages produced')+'\nStaging: '+result['staging']+'\nSaved to: '+result['output_folder']+'\nPackages: '+(', '.join(result['packages']) or 'none')+'\n'+result['warning']+'\nBuilder log:\n'+result['log'])
-            if result['packages']:
-                self.workspace.setText(result['output_folder'])
-                self.pkg.setText(result['packages'][0])
-            if not result['success']:
-                QMessageBox.warning(self,'No local PKGs created','The builder did not produce a valid PKG. See the log and staging folder. No FTP connection was attempted.')
-        elif 'destination' in result:
-            self.log.appendPlainText('TrueAncestor handoff prepared: '+result['destination']+'\nConverted folders: '+', '.join(result['folders'])+'\n'+result['instructions'])
-        elif 'exit_code' in result:
-            self.log.appendPlainText('Builder exit code: '+str(result['exit_code'])+'\n'+result['log'])
-            self.log.appendPlainText('Inspect output again; builder success does not establish game compatibility.')
-        else:
-            self.upload_active = False
-            self.transfer_status.setText('Upload complete. Remote size verified.')
-            self.log.appendPlainText(
-                f"Uploaded {result['remote_path']} ({result['bytes']:,} bytes; remote size checked).\n"
-                + result['instruction']
-            )
+        self.inspect_btn.setEnabled(True)
+        self.upload_btn.setEnabled(True)
+
+    def finished(self, result):
+        self.upload_active = False
+        self.transfer_status.setText('Upload complete. Remote size verified.')
+        self.log.appendPlainText(
+            f"Uploaded {result['remote_path']} ({result['bytes']:,} bytes; remote size checked).\n"
+            + result['instruction']
+        )
 
     def show_progress(self, sent, total):
         if not self.upload_active:
@@ -257,23 +146,10 @@ class PackageDialog(QDialog):
         self.log.appendPlainText('Operation failed: ' + message)
         QMessageBox.warning(self, 'Operation failed', message)
 
-    def trueancestor(self):
-        workspace=self.workspace.text().strip()
-        if not workspace:return QMessageBox.warning(self,'Missing workspace','Select a converted workspace first.')
-        destination=QFileDialog.getExistingDirectory(self,'Choose parent directory for a NEW TrueAncestor staging folder')
-        if not destination:return
-        target=Path(destination)/'TrueAncestor_Handoff'
-        if QMessageBox.question(self,'Prepare TrueAncestor files',
-            f'Copy converted game folders into a NEW staging directory?\n{target}\n\nThis can use several GB. Your original ISO and conversion workspace will not be changed.')!=QMessageBox.StandardButton.Yes:return
-        self.begin(TaskWorker(prepare_trueancestor,workspace,str(target)))
-
-    def build(self):
-        if not (self.workspace.text().strip() and self.builder.text().strip()):return QMessageBox.warning(self,'Missing information','Select a workspace and a trusted builder executable.')
-        if QMessageBox.question(self,'Run third-party builder','This executes an external tool that may change files inside your conversion workspace. Make sure you trust it. Continue?')!=QMessageBox.StandardButton.Yes:return
-        self.log.appendPlainText('Launching builder in background...')
-        self.begin(TaskWorker(run_builder,self.workspace.text().strip(),self.builder.text().strip(),self.args.text().strip()))
     def upload(self):
-        try:info=validate_pkg(self.workspace.text().strip(),self.pkg.text().strip())
+        package = self.pkg.text().strip()
+        root = self.package_root(package)
+        try:info=validate_pkg(root,package)
         except Exception as e:return QMessageBox.warning(self,'Invalid package',str(e))
         host=self.host.text().strip()
         if not host:return QMessageBox.warning(self,'Missing PS3 address','Enter the console IP address.')
@@ -284,7 +160,7 @@ class PackageDialog(QDialog):
         self.transfer_progress.show()
         self.transfer_status.setText('Connecting to PS3…')
         self.log.appendPlainText('Uploading package in background...')
-        worker=TaskWorker(upload_pkg_ftp,self.workspace.text().strip(),info['path'],host,
+        worker=TaskWorker(upload_pkg_ftp,root,info['path'],host,
             username=self.user.text().strip() or 'anonymous',password=self.password.text())
         last_update = 0.0
 
@@ -304,9 +180,8 @@ class PackageDialog(QDialog):
         self.password.clear();super().closeEvent(event)
 
 class WorkspaceHistoryDialog(QDialog):
-    def __init__(self, parent, folder, retail_folder=''):
+    def __init__(self, parent, folder):
         super().__init__(parent)
-        self.retail_folder = retail_folder
         self.setWindowTitle('Conversion workspace history')
         self.resize(880, 420)
         layout = QVBoxLayout(self)
@@ -322,15 +197,13 @@ class WorkspaceHistoryDialog(QDialog):
         layout.addLayout(buttons)
         self.open_button = QPushButton('Open folder')
         self.inspect_button = QPushButton('Inspect output')
-        self.build_button = QPushButton('Open PKG builder')
-        for button in (self.open_button, self.inspect_button, self.build_button):
+        for button in (self.open_button, self.inspect_button):
             buttons.addWidget(button)
         close = QPushButton('Close')
         close.clicked.connect(self.reject)
         buttons.addWidget(close)
         self.open_button.clicked.connect(self.open_folder)
-        self.inspect_button.clicked.connect(lambda: self.open_package(inspect=True))
-        self.build_button.clicked.connect(self.open_package)
+        self.inspect_button.clicked.connect(self.open_package)
         self.table.itemSelectionChanged.connect(self.update_actions)
         self.update_actions()
 
@@ -351,7 +224,6 @@ class WorkspaceHistoryDialog(QDialog):
         run = self.selected_run()
         self.open_button.setEnabled(run is not None)
         self.inspect_button.setEnabled(bool(run and run['can_inspect']))
-        self.build_button.setEnabled(bool(run and run['can_inspect']))
 
     def show_runs(self, runs):
         self.status.setText('Choose a conversion run.' if runs else 'No conversion runs found in this parent folder.')
@@ -374,13 +246,12 @@ class WorkspaceHistoryDialog(QDialog):
         if run and not QDesktopServices.openUrl(QUrl.fromLocalFile(str(run['folder']))):
             QMessageBox.warning(self, 'Folder unavailable', str(run['folder']))
 
-    def open_package(self, inspect=False):
+    def open_package(self):
         run = self.selected_run()
         if not run or not run['can_inspect']:
             return
-        dialog = PackageDialog(self, str(run['folder']), self.retail_folder)
-        if inspect:
-            dialog.inspect()
+        dialog = PackageDialog(self, str(run['folder']))
+        dialog.inspect()
         dialog.exec()
 
 
@@ -388,38 +259,24 @@ class ConverterDialog(V20Dialog):
     def __init__(self,parent=None):
         super().__init__(parent)
         actions = QHBoxLayout()
-        self.package_button = QPushButton('Inspect output / Build PKG / Upload to PS3')
+        self.package_button = QPushButton('Inspect conversion output')
         self.package_button.clicked.connect(self.open_workspace_package)
         self.history_button = QPushButton('Workspace history…')
         self.history_button.clicked.connect(self.open_workspace_history)
-        self.disc_pkg_button = QPushButton('Build PKG from disc input…')
-        self.disc_pkg_button.clicked.connect(self.open_disc_package)
-        actions.addWidget(self.disc_pkg_button)
         actions.addWidget(self.package_button)
         actions.addWidget(self.history_button)
         self.layout().insertLayout(self.layout().count() - 1, actions)
-        folder_row=QHBoxLayout()
-        self.retail2pkg_path=QLineEdit();self.retail2pkg_path.setPlaceholderText('Select your extracted Retail2Pkg folder (optional)')
-        folder_row.addWidget(self.retail2pkg_path,1)
-        pick=QPushButton('Retail2Pkg Folder…');pick.clicked.connect(self.pick_retail2pkg);folder_row.addWidget(pick)
-        self.layout().insertLayout(2,folder_row)
 
     def set_conversion_actions_enabled(self, enabled):
         super().set_conversion_actions_enabled(enabled)
         self.package_button.setEnabled(enabled)
-        self.disc_pkg_button.setEnabled(enabled)
         self.history_button.setEnabled(enabled)
-
-    def open_disc_package(self):
-        if not self.conversion_busy():
-            PackageDialog(self, self.source.text().strip(), self.retail2pkg_path.text().strip(),
-                          self.extractor.text().strip(), disc_only=True).exec()
 
     def open_workspace_package(self):
         if self.conversion_busy():
             return
         if self.prepared:
-            dialog = PackageDialog(self, self.prepared['workspace'], self.retail2pkg_path.text().strip())
+            dialog = PackageDialog(self, self.prepared['workspace'])
             dialog.inspect()
             dialog.exec()
         else:
@@ -432,16 +289,8 @@ class ConverterDialog(V20Dialog):
         if not folder:
             QMessageBox.information(self, 'Workspace parent required', 'Choose a workspace parent folder first.')
             return
-        WorkspaceHistoryDialog(self, folder, self.retail2pkg_path.text().strip()).exec()
+        WorkspaceHistoryDialog(self, folder).exec()
 
-    def pick_retail2pkg(self):
-        folder=QFileDialog.getExistingDirectory(self,'Select extracted Retail2Pkg folder')
-        if not folder:return
-        try:info=inspect_retail2pkg_folder(folder)
-        except Exception as exc:return QMessageBox.warning(self,'Invalid Retail2Pkg folder',str(exc))
-        self.retail2pkg_path.setText(info['folder'])
-        self.helper.setText(info['helper'])
-        self.log.appendPlainText('Selected Retail2Pkg toolkit: ' + info['folder'] + '\nCFW2OFW Helper executable detected.\nChoose a workspace parent. Each new run gets its own subfolder.')
 
 class Window(V20Window):
     def __init__(self,root):
@@ -453,8 +302,7 @@ class Window(V20Window):
                 action.triggered.disconnect()
                 action.triggered.connect(lambda:ConverterDialog(self).exec())
         menu.addSeparator()
-        menu.addAction('ISO → PKG (Retail2Pkg)', lambda: PackageDialog(self, disc_only=True).exec())
-        menu.addAction('PS3 PKG Builder (Local / FTP)',lambda:PackageDialog(self).exec())
+        menu.addAction('PS3 PKG Inspect and Upload',lambda:PackageDialog(self).exec())
 
 def main():
     from . import ui

@@ -1,6 +1,6 @@
 import json, tempfile, unittest
 from pathlib import Path
-from zarchive.converter_output_v21 import (inspect_conversion_output,validate_pkg,builder_command,upload_pkg_ftp)
+from zarchive.converter_output_v21 import (inspect_conversion_output,validate_pkg,upload_pkg_ftp)
 class FakeFTP:
     def __init__(self):self.files={};self.renamed=[]
     def connect(self,*a,**kw):pass
@@ -33,9 +33,6 @@ class V21(unittest.TestCase):
     def test_reject_outside(self):
         p=self.root/'outside.pkg';p.write_bytes(b'\x7fPKG'+b'x'*100)
         with self.assertRaises(ValueError):validate_pkg(self.w,p)
-    def test_no_builder_script(self):
-        x=self.root/'builder.bat';x.write_text('echo test')
-        with self.assertRaises(ValueError):builder_command(self.w,x)
     def test_ftp_upload(self):
         f=FakeFTP();res=upload_pkg_ftp(self.w,self.pkg,'192.168.1.12',ftp_factory=lambda:f)
         self.assertEqual(res['verified'],'size only');self.assertEqual(f.files['game.pkg'],self.pkg.read_bytes())

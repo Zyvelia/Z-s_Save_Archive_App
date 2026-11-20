@@ -88,7 +88,7 @@ def read_ftp_storage(host, *, port=21, user='anonymous', password='', factory=No
             except Exception:pass
 
 
-def conversion_preflight(source, helper, target, extractor=None, trueancestor=None, *, free_bytes=None, cancelled=None):
+def conversion_preflight(source, helper, target, extractor=None, *, free_bytes=None, cancelled=None):
     """Read-only local checks prior to starting ISO staging; no external executables run."""
     check_cancelled(cancelled)
     src=Path(source).expanduser()
@@ -105,10 +105,6 @@ def conversion_preflight(source, helper, target, extractor=None, trueancestor=No
     h=Path(helper).expanduser()
     if not h.is_file() or h.suffix.lower()!='.exe':errors.append('CFW2OFW Helper executable is missing')
     else:details['helper']=str(h.resolve())
-    if trueancestor:
-        ta=Path(trueancestor).expanduser()
-        if not ta.is_file():warnings.append('TrueAncestor tool was specified but does not exist')
-        else:details['trueancestor']=str(ta.resolve())
     dst=Path(target).expanduser().resolve()
     if dst.exists():errors.append('Choose a NEW work directory; existing directories are not overwritten')
     if src.exists():

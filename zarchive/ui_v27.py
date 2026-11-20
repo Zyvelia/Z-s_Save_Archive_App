@@ -61,7 +61,7 @@ class ConversionPreflight(QDialog):
         root.addWidget(QLabel('Read-only conversion check: validates source, tools, new workspace and estimated staging space.'))
         form=QFormLayout();root.addLayout(form)
         self.entries={}
-        for key,label in [('source','ISO or PS3_GAME'),('helper','CFW2OFW Helper.exe'),('extractor','7z.exe (ISO only)'),('target','New work directory'),('trueancestor','Optional TrueAncestor executable')]:
+        for key,label in [('source','ISO or PS3_GAME'),('helper','CFW2OFW Helper.exe'),('extractor','7z.exe (ISO only)'),('target','New work directory')]:
             row=QHBoxLayout();edit=QLineEdit();self.entries[key]=edit;row.addWidget(edit)
             b=QPushButton('Browse…');b.clicked.connect(lambda _,k=key:self.browse(k));row.addWidget(b)
             form.addRow(label,row)

@@ -4,12 +4,8 @@ Never writes to /dev_hdd0/game or attempts installation; uploads to packages onl
 """
 from __future__ import annotations
 import ftplib
-import hashlib
 import json
 import re
-import shlex
-import socket
-import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -62,32 +58,6 @@ def validate_pkg(workspace: str | Path, package: str | Path) -> dict:
         raise ValueError('Invalid PKG header: expected PS3 PKG magic')
     if p.stat().st_size < 64: raise ValueError('Package is too small')
     return {'path':str(p), 'filename':p.name, 'bytes':p.stat().st_size}
-
-
-def builder_command(workspace: str | Path, exe: str | Path, arguments: str = '') -> tuple[list[str],Path]:
-    """Construct an explicitly selected local executable command, no shell."""
-    root = Path(workspace).resolve(strict=True)
-    if not root.is_dir() or not (root / 'conversion_manifest.json').is_file():
-        raise ValueError('Not a conversion workspace')
-    binary=Path(exe).resolve(strict=True)
-    if not binary.is_file() or binary.suffix.lower() not in ('.exe','.bat','.cmd'):
-        raise ValueError('Select a trusted PKG builder executable or batch script')
-    if binary.suffix.lower() in ('.bat','.cmd'):
-        # shell scripts require cmd.exe and additional quoting hazards; deliberately not supported
-        raise ValueError('Batch/script builders are not supported; select an .exe builder')
-    if '\n' in arguments or '\r' in arguments:raise ValueError('Arguments must be on one line')
-    args=shlex.split(arguments, posix=False)
-    if len(args)>32 or sum(map(len,args))>4096: raise ValueError('Too many builder arguments')
-    return [str(binary), *args], root
-
-
-def run_builder(workspace: str | Path, exe: str | Path, arguments: str = '', *, timeout: int=3600) -> dict:
-    """Only run on direct user confirmation in UI; no shell and no file mutations here."""
-    command, root=builder_command(workspace,exe,arguments)
-    result=subprocess.run(command,cwd=root,stdin=subprocess.DEVNULL,
-                          capture_output=True,text=True,errors='replace',timeout=timeout,check=False)
-    log=(result.stdout+'\n'+result.stderr)[-30000:]
-    return {'exit_code':result.returncode,'log':log,'success':result.returncode==0}
 
 
 def upload_pkg_ftp(workspace: str | Path, pkg: str | Path, host: str, *,
