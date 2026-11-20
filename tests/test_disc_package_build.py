@@ -1,0 +1,53 @@
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+from zipfile import ZipFile
+
+from test_v20 import write_sfo
+from zarchive.iso_converter_v20 import extract_iso
+from zarchive.retail2pkg_v31 import REQUIRED_FILES, build_pkgs_locally
+
+
+class DiscPackageBuildTests(unittest.TestCase):
+    def test_extraction_reports_progress_from_the_child_process(self):
+        reported = []
+        extract_iso([sys.executable, '-u', '-c',
+                     "import time; print('  21% 1 - file', flush=True); time.sleep(0.8)"],
+                    None, extraction_progress=reported.append)
+        self.assertEqual(reported, [0, 21, 100])
+
+    def test_batch_runs_next_to_the_extracted_game_and_output_is_collected(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            iso = root / 'disc.iso'
+            iso.write_bytes(b'\0' * 0x8001 + b'CD001')
+            kit = root / 'Retail2Pkg.zip'
+            with ZipFile(kit, 'w') as archive:
+                for name in REQUIRED_FILES:
+                    archive.writestr(f'Retail2Pkg/{name}', name.encode())
+            extractor = root / '7z.exe'
+            extractor.touch()
+            output = root / 'output'
+            output.mkdir()
+
+            def extract(command, cancelled, progress, extraction_progress):
+                self.assertIn('-bsp1', command)
+                extracted = Path(next(item[2:] for item in command if item.startswith('-o')))
+                game = extracted / 'Disc Backup' / 'PS3_GAME'
+                game.mkdir(parents=True)
+                write_sfo(game / 'PARAM.SFO')
+
+            def batch(command, cwd, **kwargs):
+                self.assertEqual(command[-1], 'Retail2Pkg.bat')
+                self.assertEqual((cwd / 'Retail2Pkg.bat').read_bytes(), b'Retail2Pkg.bat')
+                self.assertTrue((cwd / 'PS3_GAME' / 'PARAM.SFO').is_file())
+                (cwd / 'Disc.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
+                return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+            with patch('zarchive.iso_converter_v20.extract_iso', side_effect=extract):
+                result = build_pkgs_locally(iso, kit, output, extractor=extractor, runner=batch)
+            self.assertTrue(result['success'])
+            self.assertEqual(result['packages'], [str(output / 'Disc.pkg')])

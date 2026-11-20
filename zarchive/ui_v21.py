@@ -12,6 +12,7 @@ from .ui_v04 import STYLE
 from .editor_v18 import ArchiveV18
 from .converter_output_v21 import (inspect_conversion_output,upload_pkg_ftp,validate_pkg)
 from .workspace_history import workspace_history
+from .retail2pkg_v31 import build_pkgs_locally
 from .console_v27 import summarize_transfer
 
 class TaskWorker(QThread):
@@ -23,6 +24,123 @@ class TaskWorker(QThread):
     def run(self):
         try:self.done.emit(self.fn(*self.args,**self.kwargs))
         except Exception as e:self.error.emit(str(e))
+
+class DiscPackageWorker(TaskWorker):
+    message = Signal(str)
+    extraction_percent = Signal(int)
+
+    def __init__(self, iso, toolkit, output, extractor):
+        super().__init__(build_pkgs_locally, iso, toolkit, output, extractor=extractor or None)
+        self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit)
+
+
+class DiscPackageDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('ISO → PKG (Retail2Pkg)')
+        self.resize(780, 480)
+        self.worker = None
+        self.output_path = None
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        layout.addLayout(form)
+
+        def add(label, *choices):
+            field = QLineEdit()
+            row = QHBoxLayout()
+            row.addWidget(field, 1)
+            for caption, choose in choices:
+                button = QPushButton(caption)
+                button.clicked.connect(lambda _, picker=choose: self.choose_path(field, picker))
+                row.addWidget(button)
+            form.addRow(label, row)
+            return field
+
+        self.iso = add('PS3 disc ISO', ('Browse…', lambda: self.pick_file('PS3 disc ISO (*.iso)')))
+        self.toolkit = add('Retail2Pkg toolkit',
+                           ('Folder…', lambda: QFileDialog.getExistingDirectory(self, 'Choose Retail2Pkg folder')),
+                           ('ZIP…', lambda: self.pick_file('Retail2Pkg ZIP (*.zip)')))
+        self.output = add('Save PKGs to', ('Browse…', lambda: QFileDialog.getExistingDirectory(self, 'Choose PKG output folder')))
+        self.extractor = add('7-Zip', ('Browse…', lambda: self.pick_file('7-Zip executable (*.exe)')))
+        self.extractor.setPlaceholderText('Auto-detect 7z.exe if blank')
+        self.extraction = QProgressBar()
+        self.extraction.setFormat('ISO extraction: %p%')
+        layout.addWidget(self.extraction)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        layout.addWidget(self.log, 1)
+
+        buttons = QHBoxLayout()
+        layout.addLayout(buttons)
+        self.build_button = QPushButton('Extract ISO and build PKGs')
+        self.build_button.clicked.connect(self.start_build)
+        self.output_button = QPushButton('Open output folder')
+        self.output_button.setEnabled(False)
+        self.output_button.clicked.connect(self.open_output)
+        close = QPushButton('Close')
+        close.clicked.connect(self.close)
+        for button in (self.build_button, self.output_button, close):
+            buttons.addWidget(button)
+
+    def choose_path(self, field, picker):
+        path = picker()
+        if path:
+            field.setText(path)
+
+    def pick_file(self, file_filter):
+        return QFileDialog.getOpenFileName(self, 'Choose file', '', file_filter)[0]
+
+    def start_build(self):
+        iso, toolkit, output, extractor = (
+            field.text().strip() for field in (self.iso, self.toolkit, self.output, self.extractor)
+        )
+        if not (iso and toolkit and output):
+            QMessageBox.warning(self, 'Missing build input', 'Choose the ISO, Retail2Pkg toolkit and output folder.')
+            return
+        if QMessageBox.question(
+            self, 'Run Retail2Pkg.bat',
+            'Run the selected toolkit on a fresh copy of PS3_GAME? The batch console shows patch download '
+            'progress and may ask you to press a key.'
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.extraction.setValue(0)
+        self.log.clear()
+        self.build_button.setEnabled(False)
+        self.output_button.setEnabled(False)
+        self.worker = DiscPackageWorker(iso, toolkit, output, extractor)
+        self.worker.message.connect(self.log.appendPlainText)
+        self.worker.extraction_percent.connect(self.extraction.setValue)
+        self.worker.done.connect(self.show_result)
+        self.worker.error.connect(self.show_error)
+        self.worker.finished.connect(lambda: self.build_button.setEnabled(True))
+        self.worker.start()
+
+    def show_result(self, result):
+        self.output_path = result['output_folder'] if result['success'] else result['staging']
+        self.output_button.setText('Open output folder' if result['success'] else 'Open working folder')
+        self.output_button.setEnabled(True)
+        if result['success']:
+            paths = '\n'.join(result['packages'])
+            self.log.appendPlainText(f'Saved PKGs:\n{paths}')
+        else:
+            self.log.appendPlainText(f"Retail2Pkg did not yield a build to copy. Check {result['staging']}.")
+
+    def show_error(self, error):
+        self.log.appendPlainText(f'Build stopped: {error}')
+
+    def open_output(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_path))
+
+    def reject(self):
+        if not (self.worker and self.worker.isRunning()):
+            super().reject()
+
+    def closeEvent(self, event):
+        if self.worker and self.worker.isRunning():
+            event.ignore()
+        else:
+            super().closeEvent(event)
+
 
 class PackageDialog(QDialog):
     def __init__(self, parent=None, workspace=''):
@@ -302,6 +420,7 @@ class Window(V20Window):
                 action.triggered.disconnect()
                 action.triggered.connect(lambda:ConverterDialog(self).exec())
         menu.addSeparator()
+        menu.addAction('ISO → PKG (Retail2Pkg)', lambda: DiscPackageDialog(self).exec())
         menu.addAction('PS3 PKG Inspect and Upload',lambda:PackageDialog(self).exec())
 
 def main():

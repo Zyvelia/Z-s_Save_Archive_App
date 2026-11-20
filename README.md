@@ -85,11 +85,15 @@ Run `Build_All.bat` for the Windows EXE and installer. The installer filename us
 
 Open **PS3 PKG Inspect and Upload** to inspect an existing package or upload it over FTP. The tool shows upload percentage, recent throughput and ETA once enough data is available. It checks the uploaded size before finalizing the package. If the server refuses the size check or reports a mismatch, the upload fails without publishing the final filename.
 
+### Build a PKG from a PS3 disc ISO
+
+Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose the disc ISO, your Retail2Pkg folder or ZIP, and the output folder. Click **Extract ISO and build PKGs**. The app displays 7-Zip extraction progress, locates `PS3_GAME` and puts it beside `Retail2Pkg.bat` in a fresh working folder. The batch console displays its own patch download progress and prompts. The app copies the resulting packages to your output folder.
+
 ### PS3 Stats homebrew
 
 The standalone XMB app shows CELL and RSX temperatures when enabled. Version 1.3 checks free internal storage when you press Square. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
-Download the [Save Archive v3.6.11 desktop source ZIP](downloads/Z_Save_Archive_v3.6.11_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
+Download the [Save Archive v3.6.12 desktop source ZIP](downloads/Z_Save_Archive_v3.6.12_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
 
 ### Update the Windows source folder
 

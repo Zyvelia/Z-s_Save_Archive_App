@@ -5,7 +5,7 @@ It may delete PS3_GAME in its work directory; this adapter stages a copy.
 """
 from __future__ import annotations
 import os, re, shutil, subprocess, json
-from tempfile import TemporaryFile
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from datetime import datetime, timezone
 from .storage import read_param_sfo
@@ -122,37 +122,49 @@ def safe_copy_tree(src: Path, dest: Path, cancelled=None) -> None:
                     copy_function=lambda source, target: copy_staging_file(source, target, cancelled))
 
 
-def extract_iso(command, cancelled, progress=None):
-    # A file keeps large extractor logs out of memory and avoids pipe deadlocks.
-    with TemporaryFile() as log, subprocess.Popen(
-        command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT
-    ) as process:
-        from time import monotonic
-        started = monotonic()
-        deadline = started + 3600
-        next_update = started + 10
-        try:
-            while True:
-                check_cancelled(cancelled)
-                try:
-                    code = process.wait(timeout=0.2)
-                    break
-                except subprocess.TimeoutExpired:
-                    now = monotonic()
-                    if now >= deadline:
-                        raise RuntimeError('7-Zip extraction timed out after one hour.')
-                    if now >= next_update:
-                        elapsed = int(now - started)
-                        _progress(progress, f'7-Zip is still extracting ({elapsed // 60}:{elapsed % 60:02d} elapsed).')
-                        next_update = now + 10
-        except BaseException:
-            process.kill()
-            process.wait()
-            raise
-        if code:
-            length = log.seek(0, os.SEEK_END)
-            log.seek(max(0, length - 1200))
-            raise RuntimeError('7-Zip extraction failed: ' + log.read().decode(errors='replace'))
+def extract_iso(command, cancelled, progress=None, extraction_progress=None):
+    from time import monotonic
+
+    # Separate handles keep polling from changing the child's write position.
+    with TemporaryDirectory(prefix='zarchive-7zip-') as temporary:
+        log_path = Path(temporary) / '7zip.log'
+        with log_path.open('wb') as log, log_path.open('rb') as reader, subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT
+        ) as process:
+            started = monotonic()
+            next_update = started + 10
+            last_percent = 0
+            _progress(extraction_progress, last_percent)
+            try:
+                while True:
+                    check_cancelled(cancelled)
+                    try:
+                        code = process.wait(timeout=0.25)
+                        break
+                    except subprocess.TimeoutExpired:
+                        now = monotonic()
+                        if now - started >= 3600:
+                            raise RuntimeError('7-Zip extraction timed out after one hour.')
+                        if extraction_progress is not None:
+                            end = reader.seek(0, os.SEEK_END)
+                            reader.seek(max(0, end - 4096))
+                            matches = re.findall(rb'(?:^|[\r\n\x08])[ ]*([0-9]{1,3})%', reader.read(4096))
+                            if matches and last_percent < int(matches[-1]) < 100:
+                                last_percent = int(matches[-1])
+                                extraction_progress(last_percent)
+                        if now >= next_update:
+                            elapsed = int(now - started)
+                            _progress(progress, f'7-Zip is still extracting ({elapsed // 60}:{elapsed % 60:02d} elapsed).')
+                            next_update = now + 10
+            except BaseException:
+                process.kill()
+                process.wait()
+                raise
+            if code:
+                length = reader.seek(0, os.SEEK_END)
+                reader.seek(max(0, length - 1200))
+                raise RuntimeError('7-Zip extraction failed: ' + reader.read(1200).decode(errors='replace'))
+            _progress(extraction_progress, 100)
 
 
 def find_extracted_game(root: Path, cancelled=None) -> Path:
@@ -198,7 +210,7 @@ def next_workspace(parent: str | Path, source: str | Path, *, timestamp: str | N
     raise FileExistsError('No unused conversion workspace name available')
 
 
-def stage_conversion(source: str | Path, helper: str | Path, destination: str | Path, *, extractor: str | Path | None = None, progress=None, cancelled=None) -> dict:
+def stage_conversion(source: str | Path, helper: str | Path, destination: str | Path, *, extractor: str | Path | None = None, progress=None, cancelled=None, extraction_progress=None) -> dict:
     """Prepare a newly created workspace, preserving inputs; never run downloaded tools implicitly."""
     _progress(progress, "Checking conversion helper and source...")
     check_cancelled(cancelled)
@@ -244,8 +256,8 @@ def stage_conversion(source: str | Path, helper: str | Path, destination: str | 
             _progress(progress, f'7-Zip executable: {ex}')
             extract_dir = work / 'extracted'
             extract_dir.mkdir()
-            command = [str(ex),'x','-y',f'-o{extract_dir}',str(src)]
-            extract_iso(command, cancelled, progress)
+            command = [str(ex), 'x', '-y', '-bsp1', f'-o{extract_dir}', str(src)]
+            extract_iso(command, cancelled, progress, extraction_progress)
             _progress(progress, 'Finding and validating extracted PS3_GAME...')
             game = find_extracted_game(extract_dir, cancelled)
             info = inspect_game(game)
