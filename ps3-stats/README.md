@@ -10,6 +10,6 @@ With a PS3DEV toolchain and PSL1GHT installed, set `PS3DEV` and `PSL1GHT` to the
 
 ## Install and check
 
-Download `PS3_Stats.pkg` from the repository’s Releases (the finalized CFW package), or use your local build’s `PS3_Stats.gnpdrm.pkg`. Copy it to a USB drive and install it through **Game → Package Manager → Install Package Files** on your CFW console. Start **PS3 Stats** from the Game column. Check that both temperature readings appear, compare free space with **Settings → System Settings → System Information**, and confirm that Circle returns you to the XMB. Free space is reported in GiB and may be rounded differently by the XMB.
+Download `PS3_Stats.pkg` from the repository’s [downloads folder](../downloads) (the finalized CFW package), or use your local build’s `PS3_Stats.gnpdrm.pkg`. Copy it to a USB drive and install it through **Game → Package Manager → Install Package Files** on your CFW console. Start **PS3 Stats** from the Game column. Check that both temperature readings appear, compare free space with **Settings → System Settings → System Information**, and confirm that Circle returns you to the XMB. Free space is reported in GiB and may be rounded differently by the XMB.
 
 The build can be verified on a workstation. Installation and temperature readings need confirmation on a physical CFW 4.93 console.
