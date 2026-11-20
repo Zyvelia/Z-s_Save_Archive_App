@@ -27,6 +27,9 @@ class V21(unittest.TestCase):
     def test_reject_invalid_pkg(self):
         self.pkg.write_bytes(b'BAD'+b'0'*100)
         with self.assertRaises(ValueError):validate_pkg(self.w,self.pkg)
+    def test_inspection_ignores_invalid_pkg(self):
+        self.pkg.write_bytes(b'BAD' + b'0' * 100)
+        self.assertEqual(inspect_conversion_output(self.w)['packages'], [])
     def test_reject_outside(self):
         p=self.root/'outside.pkg';p.write_bytes(b'\x7fPKG'+b'x'*100)
         with self.assertRaises(ValueError):validate_pkg(self.w,p)

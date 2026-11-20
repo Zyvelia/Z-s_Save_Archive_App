@@ -32,13 +32,17 @@ def inspect_conversion_output(workspace: str | Path, *, max_entries: int = 12000
         inspected += 1
         if inspected > max_entries:
             raise ValueError('Workspace is too large to inspect safely')
-        if p.is_symlink():
+        if p.is_symlink() or getattr(p, 'is_junction', lambda: False)():
             raise ValueError('Symlinks are not permitted in conversion output')
         rel = p.relative_to(root)
         if p.is_dir() and TITLE.fullmatch(p.name) and (p / 'PARAM.SFO').is_file():
             folders.append({'name':p.name, 'relative_path':str(rel), 'kind':'game-folder'})
-        if p.is_file() and p.suffix.lower() == '.pkg' and p.stat().st_size >= 64:
-            packages.append({'name':p.name, 'relative_path':str(rel), 'size':p.stat().st_size})
+        if p.is_file() and p.suffix.lower() == '.pkg':
+            try:
+                package = validate_pkg(root, p)
+            except ValueError:
+                continue
+            packages.append({'name':p.name, 'relative_path':str(rel), 'size':package['bytes']})
     return {'title':meta.get('title','Unknown'), 'title_id':meta.get('title_id','Unknown'),
             'folders':folders, 'packages':packages, 'scanned_entries':inspected,
             'status':'packages_found' if packages else 'folders_found' if folders else 'no_installable_output',
@@ -48,8 +52,9 @@ def inspect_conversion_output(workspace: str | Path, *, max_entries: int = 12000
 def validate_pkg(workspace: str | Path, package: str | Path) -> dict:
     """Validate an existing PKG's location and signature before transfer."""
     root = Path(workspace).resolve(strict=True)
-    p = Path(package).resolve(strict=True)
-    if not _is_inside(p,root) or not p.is_file() or p.is_symlink() or p.suffix.lower() != '.pkg':
+    candidate = Path(package)
+    p = candidate.resolve(strict=True)
+    if candidate.is_symlink() or not _is_inside(p,root) or not p.is_file() or p.suffix.lower() != '.pkg':
         raise ValueError('PKG must be a regular file inside the conversion workspace')
     with p.open('rb') as f:
         header=f.read(4)

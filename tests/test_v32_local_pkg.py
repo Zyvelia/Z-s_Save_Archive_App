@@ -58,6 +58,17 @@ class LocalPKGTests(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertEqual(result['packages'], [])
 
+    def test_staged_existing_pkg_does_not_count_as_new_output(self):
+        (self.work / 'BLUS12345' / 'Old.pkg').write_bytes(b'\x7fPKG' + b'X' * 100)
+
+        def no_output(command, **kw):
+            return SimpleNamespace(returncode=0, stdout='done', stderr='')
+
+        with patch('zarchive.retail2pkg_v31.inspect_conversion_output', return_value=self.folder_report):
+            result = build_pkgs_locally(self.work, self.kit, self.out, runner=no_output)
+        self.assertFalse(result['success'])
+        self.assertFalse((self.out / 'Old.pkg').exists())
+
     def test_reject_invalid_pkg_magic(self):
         def bad(command, **kw):
             (Path(kw['cwd']) / 'bad.pkg').write_bytes(b'wrong' * 40)

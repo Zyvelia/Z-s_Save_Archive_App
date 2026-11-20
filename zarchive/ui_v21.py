@@ -27,7 +27,7 @@ class TaskWorker(QThread):
         except Exception as e:self.error.emit(str(e))
 
 class PackageDialog(QDialog):
-    def __init__(self,parent=None,workspace=''):
+    def __init__(self,parent=None,workspace='',retail_folder=''):
         super().__init__(parent);self.setWindowTitle('PS3 PKG Builder — Local or FTP');self.resize(950,700)
         self.worker=None;self.last_report=None
         outer=QVBoxLayout(self)
@@ -37,7 +37,7 @@ class PackageDialog(QDialog):
         note.setWordWrap(True);outer.addWidget(note)
         form=QFormLayout();outer.addLayout(form)
         self.workspace=QLineEdit(workspace)
-        self.retail_folder=QLineEdit();self.local_output=QLineEdit();self.local_output.setPlaceholderText("Choose where finished .pkg files should be saved")
+        self.retail_folder=QLineEdit(retail_folder);self.local_output=QLineEdit();self.local_output.setPlaceholderText("Choose where finished .pkg files should be saved")
         self.builder=QLineEdit();self.args=QLineEdit();self.pkg=QLineEdit()
         self.host=QLineEdit();self.host.setPlaceholderText('192.168.1.50')
         self.user=QLineEdit('anonymous');self.password=QLineEdit();self.password.setEchoMode(QLineEdit.EchoMode.Password)
@@ -105,7 +105,7 @@ class PackageDialog(QDialog):
         if QMessageBox.question(self,'Prepare Retail2Pkg handoff','Copy compatible converted game files and tool executables into a NEW folder?\n\nThis may require multiple GB. The Retail2Pkg.bat script MOVES and DELETES files, so it must only run on the handoff copy.')!=QMessageBox.StandardButton.Yes:return
         self.begin(TaskWorker(prepare_retail2pkg_handoff,self.workspace.text().strip(),self.retail_folder.text().strip(),target))
     def pick_workspace(self):
-        p=QFileDialog.getExistingDirectory(self,'Select converter workspace')
+        p=QFileDialog.getExistingDirectory(self,'Select the folder containing conversion_manifest.json')
         if p:self.workspace.setText(p)
     def pick_file(self,field,filter):
         p=QFileDialog.getOpenFileName(self,'Select file','',filter)[0]
@@ -113,7 +113,13 @@ class PackageDialog(QDialog):
     def inspect(self):
         try:
             report=inspect_conversion_output(self.workspace.text().strip());self.last_report=report
-            self.log.appendPlainText('Output status: '+report['status'])
+            if report['packages']:
+                self.log.appendPlainText('PS3 PKG files found.')
+            elif report['folders']:
+                self.log.appendPlainText('Conversion folders found. No PKG exists yet. '
+                                         'To package compatible output, select an output folder and click Build PKGs Locally (No FTP).')
+            else:
+                self.log.appendPlainText('No converted title folders or PKGs found. Check the CFW2OFW Helper log.')
             self.log.appendPlainText('Game folders: '+(', '.join(x['relative_path'] for x in report['folders']) or 'none'))
             self.log.appendPlainText('Packages: '+(', '.join(x['relative_path'] for x in report['packages']) or 'none'))
             if report['packages'] and not self.pkg.text().strip():
@@ -227,8 +233,9 @@ class PackageDialog(QDialog):
         self.password.clear();super().closeEvent(event)
 
 class WorkspaceHistoryDialog(QDialog):
-    def __init__(self, parent, folder):
+    def __init__(self, parent, folder, retail_folder=''):
         super().__init__(parent)
+        self.retail_folder = retail_folder
         self.setWindowTitle('Conversion workspace history')
         self.resize(880, 420)
         layout = QVBoxLayout(self)
@@ -300,7 +307,7 @@ class WorkspaceHistoryDialog(QDialog):
         run = self.selected_run()
         if not run or not run['can_inspect']:
             return
-        dialog = PackageDialog(self, str(run['folder']))
+        dialog = PackageDialog(self, str(run['folder']), self.retail_folder)
         if inspect:
             dialog.inspect()
         dialog.exec()
@@ -332,7 +339,9 @@ class ConverterDialog(V20Dialog):
         if self.conversion_busy():
             return
         if self.prepared:
-            PackageDialog(self, self.prepared['workspace']).exec()
+            dialog = PackageDialog(self, self.prepared['workspace'], self.retail2pkg_path.text().strip())
+            dialog.inspect()
+            dialog.exec()
         else:
             self.open_workspace_history()
 
@@ -343,7 +352,7 @@ class ConverterDialog(V20Dialog):
         if not folder:
             QMessageBox.information(self, 'Workspace parent required', 'Choose a workspace parent folder first.')
             return
-        WorkspaceHistoryDialog(self, folder).exec()
+        WorkspaceHistoryDialog(self, folder, self.retail2pkg_path.text().strip()).exec()
 
     def pick_retail2pkg(self):
         folder=QFileDialog.getExistingDirectory(self,'Select extracted Retail2Pkg folder')

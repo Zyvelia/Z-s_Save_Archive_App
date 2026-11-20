@@ -5,13 +5,13 @@ the batch file renames, moves, and deletes directories. Prepare a separate copy
 instead, leaving actual execution to the user after inspecting the staged files.
 """
 from __future__ import annotations
-import os
 import shutil
 import subprocess
 import sys
 import uuid
 from pathlib import Path
-from .converter_output_v21 import inspect_conversion_output
+from .converter_output_v21 import inspect_conversion_output, validate_pkg
+from .iso_converter_v20 import TITLE_ID, safe_copy_tree
 
 REQUIRED_FILES = (
     'CFW2OFW_Helper.exe', 'Retail2Pkg.bat', 'makepkg1.exe',
@@ -53,34 +53,48 @@ def prepare_retail2pkg_handoff(workspace: str | Path, tool_folder: str | Path,
         raise FileExistsError('Select a new handoff folder; existing files cannot be overwritten')
     if not target.parent.is_dir() or target.parent.is_symlink():
         raise ValueError('Destination parent must be a normal, existing folder')
+    if not (source / 'conversion_manifest.json').is_file():
+        raise ValueError('Select the conversion workspace that contains conversion_manifest.json, '
+                         'rather than an individual BLUS/NPUB title folder.')
     report = inspect_conversion_output(source)
     toolroot = Path(tools['folder'])
     for origin in (source, toolroot):
         if target == origin or origin in target.parents or target in origin.parents:
             raise ValueError('Handoff must be separate from the conversion workspace and Retail2Pkg installation')
-    candidates = []
+
+    groups: dict[Path, list[Path]] = {}
     for folder in report['folders']:
         path = source / folder['relative_path']
-        parent = path.parent
-        if parent == source or not parent.name.upper().startswith(('BL','BC')):
+        groups.setdefault(path.parent, []).append(path)
+
+    candidates = []
+    for parent, children in groups.items():
+        digital = [child for child in children if child.name.upper().startswith('NP')]
+        expected_patch = (str(report.get('title_id', '')) if parent == source else parent.name).upper()
+        if not TITLE_ID.fullmatch(expected_patch):
             continue
-        # Must include both converted digital game and physical patch directories.
-        names = [p.name.upper() for p in parent.iterdir() if p.is_dir() and not p.is_symlink()]
-        if any(n.startswith('NP') for n in names) and any(n.startswith(('BL','BC')) for n in names):
-            if parent not in candidates: candidates.append(parent)
+        patches = [child for child in children if child.name.upper() == expected_patch]
+        if len(digital) == len(patches) == 1:
+            candidates.append((parent, patches[0], digital[0]))
+
     if len(candidates) != 1:
-        raise ValueError('Expected exactly one converted BL*/BC* parent containing NP* game and BL*/BC* patch folders. '
-                         'Finish CFW2OFW conversion and inspect its output before preparing PKGs.')
-    parent = candidates[0]
-    for current, dirs, files in os.walk(parent, followlinks=False):
-        for name in dirs + files:
-            if (Path(current) / name).is_symlink():
-                raise ValueError('Conversion output contains a symbolic link; refusing to copy')
+        found = ', '.join(folder['relative_path'] for folder in report['folders']) or 'none'
+        raise ValueError('Retail2Pkg needs one converted NP title folder and its matching disc-ID patch folder. '
+                         f'Found: {found}. Check the CFW2OFW Helper log and finish conversion '
+                         'before building a PKG. Renaming the folder does not convert its contents.')
+    parent, patch, digital = candidates[0]
+    staged_name = patch.name.upper() if parent == source else parent.name
     target.mkdir(parents=False, exist_ok=False)
     try:
         for name in tools['files']:
             shutil.copy2(toolroot / name, target / name)
-        shutil.copytree(parent, target / parent.name)
+        if parent == source:
+            staged_parent = target / staged_name
+            staged_parent.mkdir()
+            for folder in (patch, digital):
+                safe_copy_tree(folder, staged_parent / folder.name)
+        else:
+            safe_copy_tree(parent, target / staged_name)
         instructions = (
             'Retail2Pkg handoff (COPY). Your originals have not been changed.\n'
             'Review the copied folder layout before running any program.\n'
@@ -90,7 +104,7 @@ def prepare_retail2pkg_handoff(workspace: str | Path, tool_folder: str | Path,
             'Review resulting PKGs before transferring or installing on PS3.\n'
         )
         (target / 'RETAIL2PKG_HANDOFF_README.txt').write_text(instructions, encoding='utf-8')
-        return {'destination': str(target), 'folders': [parent.name], 'instructions': instructions}
+        return {'destination': str(target), 'folders': [staged_name], 'instructions': instructions}
     except BaseException:
         # The output is an independent, new copy. Leave partial data for review
         # rather than silently deleting potentially large files.
@@ -119,7 +133,8 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
             raise ValueError('The PKG output folder must be separate from the conversion workspace and toolkit')
     # Isolated stage is never reused, avoiding accidental deletion of earlier builds.
     stage = output / ('Retail2Pkg_Build_' + uuid.uuid4().hex[:12])
-    prepared = prepare_retail2pkg_handoff(source, kit, stage)
+    prepare_retail2pkg_handoff(source, kit, stage)
+    previous_packages = {path for path in stage.rglob('*') if path.suffix.lower() == '.pkg'}
     command = ['cmd.exe', '/d', '/c', 'call', 'Retail2Pkg.bat']
     invoke = runner or subprocess.run
     try:
@@ -130,15 +145,15 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
         (stage / 'BUILD_FAILED.txt').write_text('The external builder raised an error; inspect this staging folder.\n', encoding='utf-8')
         raise
     log = ((result.stdout or '') + '\n' + (result.stderr or ''))[-30000:]
-    packages = sorted(stage.rglob('*.pkg'))
+    packages = sorted(path for path in stage.rglob('*')
+                      if path.suffix.lower() == '.pkg' and path not in previous_packages)
     output_pkgs = []
     if result.returncode == 0:
         for pkg in packages:
-            if pkg.is_symlink() or not pkg.is_file() or pkg.stat().st_size < 64:
+            try:
+                validate_pkg(stage, pkg)
+            except (OSError, ValueError):
                 continue
-            with pkg.open('rb') as f:
-                if f.read(4) != b'\x7fPKG':
-                    continue
             dest = output / pkg.name
             if dest.exists():
                 # Preserve previous output and never silently replace it.

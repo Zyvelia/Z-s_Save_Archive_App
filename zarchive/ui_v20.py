@@ -126,7 +126,7 @@ class ConverterDialog(QDialog):
         self.cancel_stage.clicked.connect(self.request_stage_cancel)
         btns.addWidget(self.cancel_stage)
         end=QPushButton('Close');end.clicked.connect(self.close);btns.addWidget(end)
-        self.log.appendPlainText('Choose a workspace parent folder once; every conversion automatically gets its own safe subfolder.\nUse Stage & Convert for the full workflow. Run staged converter is disabled until staging finishes. Encrypted PS3 ISOs cannot be decrypted by 7-Zip; provide an extractable disc image or a PS3_GAME folder from your own backup.')
+        self.log.appendPlainText('Choose a workspace parent folder once; every conversion automatically gets its own safe subfolder.\nUse Stage & Convert to prepare the game folders. Open the PKG builder afterward to package compatible output. Run staged converter is disabled until staging finishes. Encrypted PS3 ISOs cannot be decrypted by 7-Zip; provide an extractable disc image or a PS3_GAME folder from your own backup.')
     def copy_troubleshooting_report(self):
         lines = self.log.toPlainText()[-12000:].splitlines()[-40:]
         if self.hide_report_paths.isChecked():
@@ -361,7 +361,7 @@ class ConverterDialog(QDialog):
         self.save_converter_status(work, self.report_step)
         self.stop_activity(success)
         self.log.appendPlainText(f'Converter exit code: {code}; inspect output in {work}. An exit code alone does not prove game compatibility.')
-        self.status.setText('Conversion command finished.' if success else f'Converter failed (exit {code}); review the log.')
+        self.status.setText('Converter finished. Open the PKG builder to inspect or package the output.' if success else f'Converter failed (exit {code}); review the log.')
         self.runbtn.setEnabled(True)
         self.set_conversion_actions_enabled(True)
 

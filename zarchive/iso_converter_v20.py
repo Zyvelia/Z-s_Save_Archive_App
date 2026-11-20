@@ -113,7 +113,8 @@ def safe_copy_tree(src: Path, dest: Path, cancelled=None) -> None:
     def reject_links(folder, names):
         check_cancelled(cancelled)
         for name in names:
-            if (Path(folder) / name).is_symlink():
+            child = Path(folder) / name
+            if child.is_symlink() or getattr(child, 'is_junction', lambda: False)():
                 raise ValueError('Source contains symbolic links, which are not supported')
         return []
     shutil.copytree(src, dest, ignore=reject_links,

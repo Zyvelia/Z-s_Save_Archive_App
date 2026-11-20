@@ -79,6 +79,11 @@ See `RELEASE_NOTES_v3.1.md` for safe tool-folder selection and separate PKG hand
 Open **PS3 Tools → PS3 PKG Builder (Local / FTP)**. Choose a completed conversion workspace, your extracted Retail2Pkg tools directory, and a separate output folder. Click **Build PKGs Locally (No FTP)** and confirm running the third-party batch in an isolated staging copy. Finished PKGs with a recognizable header are copied to the output directory; they are not installed on the console. See `RELEASE_NOTES_v3.2.md`. `Build_All.bat` still builds the Windows EXE followed by the Inno installer.
 
 
+### If conversion leaves a BLUS or NPUB folder
+
+The ISO → XMB Assistant runs CFW2OFW Helper and puts its results into a workspace. Open that workspace in **Inspect output / Build PKG / Upload to PS3** to see what was produced. Retail2Pkg needs a converted NP title folder and its matching disc-ID patch folder. If only one is present, check the helper's output and the requirements for that title before running the PKG builder. Select the workspace containing `conversion_manifest.json` and choose a separate folder for the finished PKGs.
+
+
 ## v3.5 — Starter tags and save provenance
 The save inspector includes a **Choose Starter Tags** dialog (suggested options, without forcing them onto existing records). Custom tags and the existing three save categories remain unchanged. Each archived save may also have user-entered origin type, source/creator, optional HTTP(S) URL, and notes. Existing archives migrate by adding optional columns, without altering save files. Provenance is unverified user-supplied metadata. ZIP backups include origin metadata; public site export does not expose it.
 
@@ -103,7 +108,7 @@ The PS3 PKG Builder shows upload percentage, recent throughput and ETA once enou
 
 The standalone XMB app shows CELL and RSX temperatures when enabled. Version 1.3 checks free internal storage when you press Square. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
-The [downloads folder](downloads/) contains the PS3 Stats preview package, the Save Archive v3.6.2 desktop source ZIP, and SHA-256 checksums.
+Download the [Save Archive v3.6.5 desktop source ZIP](downloads/Z_Save_Archive_v3.6.5_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
 
 ### Update the Windows source folder
 

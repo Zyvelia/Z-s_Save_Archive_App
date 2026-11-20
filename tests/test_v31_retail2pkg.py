@@ -35,4 +35,29 @@ class Retail2PkgTests(unittest.TestCase):
         self.assertTrue((self.root/'out'/'BLUS12345'/'NPUB12345'/'DATA.BIN').exists())
         self.assertIn('MOVES and DELETES',out['instructions'])
 
+    def test_flat_converted_pair_is_arranged_for_builder(self):
+        work = self.root / 'work'
+        work.mkdir()
+        (work / 'conversion_manifest.json').write_text('{"title_id":"BLUS12345"}')
+        for title in ('NPUB12345', 'BLUS12345'):
+            folder = work / title
+            folder.mkdir()
+            (folder / 'PARAM.SFO').write_bytes(b'fixture')
+        target = self.root / 'out'
+        prepare_retail2pkg_handoff(work, self.tools, target)
+        for title in ('NPUB12345', 'BLUS12345'):
+            self.assertTrue((target / 'BLUS12345' / title / 'PARAM.SFO').is_file())
+            self.assertTrue((work / title / 'PARAM.SFO').is_file())
+
+    def test_single_title_folder_is_reported_as_incomplete(self):
+        work = self.root / 'work'
+        game = work / 'NPUB12345'
+        game.mkdir(parents=True)
+        (work / 'conversion_manifest.json').write_text('{"title_id":"BLUS12345"}')
+        (game / 'PARAM.SFO').write_bytes(b'fixture')
+        target = self.root / 'out'
+        with self.assertRaisesRegex(ValueError, r'matching disc-ID patch folder.*NPUB12345'):
+            prepare_retail2pkg_handoff(work, self.tools, target)
+        self.assertFalse(target.exists())
+
 if __name__=='__main__':unittest.main()

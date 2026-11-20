@@ -57,6 +57,29 @@ class ConversionReliability(unittest.TestCase):
         self.assertEqual(json.loads(manifest.read_text(encoding='utf-8')), before)
         self.assertTrue((self.source / 'PARAM.SFO').is_file())
 
+    @unittest.skipUnless(QApplication, 'PySide6 is required to test the PKG builder handoff')
+    def test_pkg_builder_inherits_the_selected_retail2pkg_folder(self):
+        from zarchive.appdata_v34 import AppPaths
+        from zarchive.ui_v21 import ConverterDialog
+
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        app = QApplication.instance() or QApplication([])
+        paths = AppPaths.discover(env={
+            'LOCALAPPDATA': str(self.root / 'local'), 'APPDATA': str(self.root / 'roaming')
+        })
+        with patch.object(AppPaths, 'discover', return_value=paths):
+            dialog = ConverterDialog()
+        self.addCleanup(dialog.close)
+        dialog.retail2pkg_path.setText(str(self.helper.parent))
+        dialog.prepared = {'workspace': str(self.parent / 'finished')}
+
+        with patch('zarchive.ui_v21.PackageDialog') as package:
+            dialog.open_workspace_package()
+        package.assert_called_once_with(dialog, str(self.parent / 'finished'), str(self.helper.parent))
+        package.return_value.inspect.assert_called_once_with()
+        package.return_value.exec.assert_called_once_with()
+        app.processEvents()
+
     @unittest.skipUnless(QApplication, 'PySide6 is required for the converter dialog regression')
     def test_failed_new_stage_does_not_leave_previous_game_runnable(self):
         from PySide6.QtTest import QTest
