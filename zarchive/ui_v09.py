@@ -10,6 +10,7 @@ from .ui_v04 import STYLE
 from .transfer_v06 import ROOT,SAVE_RE,child_path
 from .reliability_v09 import inspect_pc_candidate,recoverable_jobs,retry_failed
 from . import ui_v06
+from .ui_ps3_live_stats import LiveTemperatures
 
 class ListingWorker(QObject):
     result=Signal(str,object,str)
@@ -34,6 +35,9 @@ class FTPBrowser(BaseFTPBrowser):
         self.layout().insertWidget(self.layout().count()-2,self.recover_btn)
         self.layout().insertWidget(self.layout().count()-2,self.recovery_status)
         self.progress.setFormat('%v / %m saves processed')
+        live = QPushButton('Live Temperatures')
+        live.clicked.connect(lambda: LiveTemperatures(self.host.text().strip(), self).exec())
+        self.layout().insertWidget(1, live)
 
     def _browse(self,path,new_connection=False):
         if self.browse_thread is not None or self.thread is not None:return

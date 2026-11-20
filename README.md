@@ -112,3 +112,7 @@ Close Save Archive and double-click **Update_Archive.bat** in the source folder.
 For an older source ZIP, download [update_archive.py](update_archive.py) once, put it next to `main.py`, and run `py -3 update_archive.py` from that directory. The update installs the batch launcher. If you cloned the repository with Git, use `git pull`. For a packaged Windows EXE, rebuild it after updating the source.
 
 When publishing a desktop update, use a fresh versioned source ZIP and update its single desktop entry in `downloads/SHA256SUMS.txt` in the same commit. Keep `update_archive.py` and `Update_Archive.bat` in the ZIP.
+
+### View PS3 temperatures on your PC
+
+On the same LAN as a PS3 running webMAN MOD with its web server available, open **PS3 Console → Live Temperatures**. Enter the PS3’s IP address and choose **Start monitoring**. The app reads CELL and RSX temperatures from webMAN MOD every five seconds until you stop or close the window. The console’s Temperature Information menu and the PS3 Stats PKG can stay closed.

@@ -1,2 +1,2 @@
 384dd8a4fc85290e40eefebc0087b97ca83d492dfa6bf5bf216271ab25a6eadc  PS3_Stats.pkg
-8008c992d2077a8d358f247c3f5d722bac4f0ea2d3627892bb6940b0eb40595e  Z_Save_Archive_v3.6.3_Source.zip
+879e60ee5624da9a005babed619bbeea9b6873e532af38cf6eeff288a13154b7  Z_Save_Archive_v3.6.4_Source.zip
