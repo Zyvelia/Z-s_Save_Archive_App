@@ -2,10 +2,12 @@
 
 Never execute Retail2Pkg.bat against an original game or conversion workspace:
 the batch file renames, moves, and deletes directories. Prepare a separate copy
-instead, leaving actual execution to the user after inspecting the staged files.
+instead and run the batch there after user confirmation.
 """
 from __future__ import annotations
 import os
+from time import monotonic
+from types import SimpleNamespace
 import shutil
 import subprocess
 import sys
@@ -114,9 +116,82 @@ def prepare_local_batch(iso_path: str | Path, tool_folder: str | Path,
     return stage
 
 
+def stream_batch_log(process, log_path: Path, timeout: int, *, progress, console_status, encoding):
+    """Read complete console lines and render the current line's backspaces."""
+    deadline = monotonic() + timeout
+    line = []
+    cursor = 0
+    previous_status = ''
+    tail = ''
+    with log_path.open(encoding=encoding, errors='replace', newline='') as reader:
+        while True:
+            try:
+                exit_code = process.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                exit_code = None
+                if monotonic() >= deadline:
+                    process.kill()
+                    process.wait()
+                    raise TimeoutError('Retail2Pkg did not finish within the build timeout.')
+            lines = []
+            while chunk := reader.read(65536):
+                for character in chunk:
+                    if character == '\n':
+                        lines.append(''.join(line))
+                        line.clear()
+                        cursor = 0
+                    elif character == '\r':
+                        cursor = 0
+                    elif character == '\b':
+                        cursor = max(0, cursor - 1)
+                    elif cursor < len(line):
+                        line[cursor] = character
+                        cursor += 1
+                    else:
+                        line.append(character)
+                        cursor += 1
+            status = ''.join(line).rstrip()
+            if exit_code is not None and status:
+                lines.append(status)
+                status = ''
+            if lines:
+                text = '\n'.join(lines)
+                tail = (tail + text + '\n')[-30000:]
+                if progress is not None:
+                    progress(text)
+            if status != previous_status and console_status is not None:
+                console_status(status)
+            previous_status = status
+            if exit_code is not None:
+                return SimpleNamespace(returncode=exit_code, stdout=tail, stderr='')
+
+
+def run_windows_batch(stage, timeout, progress, console_status):
+    working_dir = _batch_working_directory(stage)
+    env = dict(os.environ)
+    env['PATH'] = str(working_dir) + os.pathsep + env.get('PATH', '')
+    log_name = f'Retail2Pkg_{uuid.uuid4().hex[:8]}.log'
+    log_path = stage / log_name
+    log_path.touch(exist_ok=False)
+    command = ['cmd.exe', '/d', '/s', '/c',
+               'title Retail2Pkg - Watch the log in Save Archive'
+               ' & echo Watch the log in Save Archive. Use this window for input prompts.'
+               rf' & call .\Retail2Pkg.bat > {log_name} 2>&1']
+    # Redirect inside cmd so Windows still gives the new console a keyboard.
+    with subprocess.Popen(command, cwd=working_dir, env=env,
+                          creationflags=subprocess.CREATE_NEW_CONSOLE) as process:
+        try:
+            return stream_batch_log(process, log_path, timeout, progress=progress,
+                                    console_status=console_status, encoding='oem')
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            raise
+
+
 def build_pkgs_locally(iso_path: str | Path, tool_folder: str | Path,
                        output_folder: str | Path, *, timeout: int = 7200,
-                       runner=None, extractor: str | Path | None = None, progress=None, extraction_progress=None) -> dict:
+                       runner=None, extractor: str | Path | None = None, progress=None, extraction_progress=None, console_status=None) -> dict:
     """Run the chosen Retail2Pkg batch on an isolated copy of disc input.
 
     This is an explicit opt-in to execute the user's third-party batch file.
@@ -130,22 +205,13 @@ def build_pkgs_locally(iso_path: str | Path, tool_folder: str | Path,
     output = stage.parent
     previous_packages = {path for path in stage.rglob('*') if path.suffix.lower() == '.pkg'}
     command = ['cmd.exe', '/d', '/c', 'call', 'Retail2Pkg.bat']
-    invoke = runner or subprocess.run
     if progress is not None:
-        progress('Starting Retail2Pkg.bat. Watch its Windows console for conversion progress and any key prompts.')
+        progress('Starting Retail2Pkg.bat. Its output appears here. Use the Windows console for key prompts.')
     try:
         if runner is None:
-            # This batch can pause, prompt via XCOPY, or open PS3Merge.
-            working_dir = _batch_working_directory(stage)
-            env = dict(os.environ)
-            # Resolve the helper and packers from this run even on Windows
-            # systems that disable searching the current directory for commands.
-            env['PATH'] = str(working_dir) + os.pathsep + env.get('PATH', '')
-            result = invoke(command[:-1] + [r'.\Retail2Pkg.bat'], cwd=working_dir, env=env,
-                            creationflags=subprocess.CREATE_NEW_CONSOLE,
-                            timeout=timeout, check=False)
+            result = run_windows_batch(stage, timeout, progress, console_status)
         else:
-            result = invoke(command, cwd=stage, stdin=subprocess.DEVNULL,
+            result = runner(command, cwd=stage, stdin=subprocess.DEVNULL,
                             capture_output=True, text=True, errors='replace',
                             timeout=timeout, check=False)
     except Exception as exc:
@@ -154,7 +220,8 @@ def build_pkgs_locally(iso_path: str | Path, tool_folder: str | Path,
         progress(f'Retail2Pkg.bat exited with code {result.returncode}. Checking for new PKG files…')
     log = ((result.stdout or '') + '\n' + (result.stderr or ''))[-30000:]
     packages = sorted(path for path in stage.rglob('*')
-                      if path.suffix.lower() == '.pkg' and path not in previous_packages)
+                      if path.suffix.lower() == '.pkg' and path not in previous_packages
+                      and path.relative_to(stage).parts[0].casefold() not in {'patch', 'ps3_game'})
     output_pkgs = []
     if result.returncode == 0:
         for pkg in packages:

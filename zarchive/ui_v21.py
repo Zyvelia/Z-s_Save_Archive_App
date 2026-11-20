@@ -28,10 +28,12 @@ class TaskWorker(QThread):
 class DiscPackageWorker(TaskWorker):
     message = Signal(str)
     extraction_percent = Signal(int)
+    console_status = Signal(str)
 
     def __init__(self, iso, toolkit, output, extractor):
         super().__init__(build_pkgs_locally, iso, toolkit, output, extractor=extractor or None)
-        self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit)
+        self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit,
+                           console_status=self.console_status.emit)
 
 
 class DiscPackageDialog(QDialog):
@@ -66,6 +68,10 @@ class DiscPackageDialog(QDialog):
         self.extraction = QProgressBar()
         self.extraction.setFormat('ISO extraction: %p%')
         layout.addWidget(self.extraction)
+        self.batch_status = QLabel()
+        self.batch_status.setWordWrap(True)
+        self.batch_status.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.batch_status)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         layout.addWidget(self.log, 1)
@@ -99,17 +105,19 @@ class DiscPackageDialog(QDialog):
             return
         if QMessageBox.question(
             self, 'Run Retail2Pkg.bat',
-            'Run the selected toolkit on a fresh copy of PS3_GAME? The batch console shows patch download '
-            'progress and may ask you to press a key.'
+            'Run the selected toolkit on a fresh copy of PS3_GAME? The app shows the batch log. Use '
+            'the Windows console if the batch asks you to press a key.'
         ) != QMessageBox.StandardButton.Yes:
             return
         self.extraction.setValue(0)
+        self.batch_status.clear()
         self.log.clear()
         self.build_button.setEnabled(False)
         self.output_button.setEnabled(False)
         self.worker = DiscPackageWorker(iso, toolkit, output, extractor)
         self.worker.message.connect(self.log.appendPlainText)
         self.worker.extraction_percent.connect(self.extraction.setValue)
+        self.worker.console_status.connect(self.batch_status.setText)
         self.worker.done.connect(self.show_result)
         self.worker.error.connect(self.show_error)
         self.worker.finished.connect(lambda: self.build_button.setEnabled(True))
@@ -126,6 +134,7 @@ class DiscPackageDialog(QDialog):
             self.log.appendPlainText(f"Retail2Pkg did not yield a build to copy. Check {result['staging']}.")
 
     def show_error(self, error):
+        self.batch_status.clear()
         self.log.appendPlainText(f'Build stopped: {error}')
 
     def open_output(self):
