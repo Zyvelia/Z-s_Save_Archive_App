@@ -101,7 +101,7 @@ The PS3 PKG Builder shows upload percentage, recent throughput and ETA once enou
 
 ### PS3 Stats homebrew
 
-The standalone XMB app shows CELL and RSX temperatures and free internal storage. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
+The standalone XMB app shows CELL and RSX temperatures when enabled. The free-storage reading is disabled in v1.2. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
 The [downloads folder](downloads/) contains the PS3 Stats preview package, the Save Archive v3.6.2 desktop source ZIP, and SHA-256 checksums.
 

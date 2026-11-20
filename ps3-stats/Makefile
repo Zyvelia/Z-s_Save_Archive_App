@@ -13,7 +13,7 @@ ICON0 := $(CURDIR)/ICON0.PNG
 SFOXML := $(CURDIR)/param.xml
 CFLAGS := -O2 -Wall -Wextra -std=gnu99 -mcpu=cell $(MACHDEP) $(LIBPSL1GHT_INC)
 LIBPATHS := $(LIBPSL1GHT_LIB)
-LIBS := -lrsx -lgcm_sys -lio -lsysutil -lsysfs -lrt -llv2
+LIBS := -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2
 LDFLAGS := $(MACHDEP)
 LD := $(CC)
 

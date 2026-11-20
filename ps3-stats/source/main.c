@@ -5,7 +5,6 @@
 #include <unistd.h>
 
 #include <io/pad.h>
-#include <lv2/sysfs.h>
 #include <lv2/systime.h>
 #include <rsx/rsx.h>
 #include <sysutil/sysutil.h>
@@ -64,19 +63,6 @@ static void temperature(u32 sensor, char *value, size_t capacity)
         snprintf(value, capacity, "%u C", (unsigned)degrees);
     else
         snprintf(value, capacity, "UNAVAILABLE");
-}
-
-static void free_storage(char *value, size_t capacity)
-{
-    u32 block_size = 0;
-    u64 blocks = 0;
-    if (sysFsGetFreeSize("/dev_hdd0", &block_size, &blocks) != 0 || block_size == 0) {
-        snprintf(value, capacity, "UNAVAILABLE");
-        return;
-    }
-    const u64 mib = ((u64)block_size * blocks) / (1024 * 1024);
-    snprintf(value, capacity, "%llu.%u GIB",
-             (unsigned long long)(mib / 1024), (unsigned)((mib % 1024) * 10 / 1024));
 }
 
 static bool init_video(void)
@@ -209,7 +195,7 @@ static bool present(unsigned back, char values[3][32], bool sensors_enabled)
 
 int main(void)
 {
-    startup_log("PS3 Stats 1.1 starting", true);
+    startup_log("PS3 Stats 1.2 starting", true);
     if (!init_video() || ioPadInit(MAX_PADS) != 0)
         return 1;
     if (sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sysutil_event, NULL) != 0) {
@@ -218,7 +204,7 @@ int main(void)
         return 1;
     }
 
-    char values[3][32] = {"PAUSED", "PAUSED", "READING"};
+    char values[3][32] = {"PAUSED", "PAUSED", "UNAVAILABLE"};
     unsigned front = 0;
     bool sensors_enabled = false;
     bool first_temperature = true;
@@ -258,10 +244,7 @@ int main(void)
                 first_temperature = false;
             }
             if (first_read)
-                startup_log("First frame displayed. Reading internal storage", false);
-            free_storage(values[2], sizeof(values[2]));
-            if (first_read)
-                startup_log("Initial storage reading finished", false);
+                startup_log("First display flip completed", false);
             first_read = false;
             front ^= 1;
             if (!present(front, values, sensors_enabled)) {
