@@ -10,6 +10,7 @@ TITLE := PS3 Stats
 APPID := ZSTATS001
 CONTENTID := UP0001-$(APPID)_00-0000000000000000
 ICON0 := $(CURDIR)/ICON0.PNG
+SFOXML := $(CURDIR)/param.xml
 CFLAGS := -O2 -Wall -Wextra -std=gnu99 -mcpu=cell $(MACHDEP) $(LIBPSL1GHT_INC)
 LIBPATHS := $(LIBPSL1GHT_LIB)
 LIBS := -lrsx -lgcm_sys -lio -lsysutil -lsysfs -lrt -llv2
@@ -20,7 +21,7 @@ LD := $(CC)
 all: PS3_Stats.pkg
 
 PS3_Stats.elf: build/main.o
-PS3_Stats.pkg: ICON0.PNG
+PS3_Stats.pkg: ICON0.PNG param.xml
 
 build/main.o: source/main.c source/font.h
 	mkdir -p build
