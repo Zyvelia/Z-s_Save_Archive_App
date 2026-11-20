@@ -11,7 +11,7 @@ import sys
 import uuid
 from pathlib import Path
 from .converter_output_v21 import inspect_conversion_output, validate_pkg
-from .iso_converter_v20 import TITLE_ID, safe_copy_tree
+from .iso_converter_v20 import TITLE_ID, safe_copy_tree, stage_conversion
 
 REQUIRED_FILES = (
     'CFW2OFW_Helper.exe', 'Retail2Pkg.bat', 'makepkg1.exe',
@@ -112,10 +112,23 @@ def prepare_retail2pkg_handoff(workspace: str | Path, tool_folder: str | Path,
         raise
 
 
+def _batch_working_directory(stage: Path) -> Path:
+    # Retail2Pkg.bat expands %CD% without quotes in its move commands.
+    if not any(c in str(stage) for c in ' &()^%!'):
+        return stage
+    from ctypes import WinDLL, create_unicode_buffer
+    short_path = create_unicode_buffer(32768)
+    length = WinDLL('kernel32').GetShortPathNameW(str(stage), short_path, len(short_path))
+    if 0 < length < len(short_path) and not any(c in short_path.value for c in ' &()^%!'):
+        return Path(short_path.value)
+    raise ValueError('Retail2Pkg.bat requires a work path without spaces or CMD special characters. '
+                     'Choose a local output folder with a simple path, such as C:\\PS3Build.')
+
+
 def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
                        output_folder: str | Path, *, timeout: int = 7200,
-                       runner=None) -> dict:
-    """Build using a *new* isolated Retail2Pkg handoff, with no FTP calls.
+                       runner=None, extractor: str | Path | None = None) -> dict:
+    """Run the chosen Retail2Pkg batch on an isolated copy of disc input or converted output.
 
     This is an explicit opt-in to execute the user's third-party batch file.
     The batch manipulates and removes its own working directories; originals
@@ -133,14 +146,29 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
             raise ValueError('The PKG output folder must be separate from the conversion workspace and toolkit')
     # Isolated stage is never reused, avoiding accidental deletion of earlier builds.
     stage = output / ('Retail2Pkg_Build_' + uuid.uuid4().hex[:12])
-    prepare_retail2pkg_handoff(source, kit, stage)
+    toolkit = inspect_retail2pkg_folder(kit)
+    if (source / 'conversion_manifest.json').is_file():
+        prepare_retail2pkg_handoff(source, kit, stage)
+    else:
+        # The batch starts CFW2OFW Helper itself. Give it the original disc layout
+        # on a copy so it can perform conversion and packaging in one run.
+        if source.is_dir() and source.name.upper() != 'PS3_GAME' and not (source / 'PS3_GAME').is_dir():
+            raise ValueError('Select a disc ISO, a PS3_GAME folder or its parent, '
+                             'or a conversion workspace containing conversion_manifest.json.')
+        stage_conversion(source, toolkit['helper'], stage, extractor=extractor)
     previous_packages = {path for path in stage.rglob('*') if path.suffix.lower() == '.pkg'}
     command = ['cmd.exe', '/d', '/c', 'call', 'Retail2Pkg.bat']
     invoke = runner or subprocess.run
     try:
-        result = invoke(command, cwd=stage, stdin=subprocess.DEVNULL,
-                        capture_output=True, text=True, errors='replace',
-                        timeout=timeout, check=False)
+        if runner is None:
+            # This batch can pause, prompt via XCOPY, or open PS3Merge.
+            result = invoke(command, cwd=_batch_working_directory(stage),
+                            creationflags=subprocess.CREATE_NEW_CONSOLE,
+                            timeout=timeout, check=False)
+        else:
+            result = invoke(command, cwd=stage, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, errors='replace',
+                            timeout=timeout, check=False)
     except Exception:
         (stage / 'BUILD_FAILED.txt').write_text('The external builder raised an error; inspect this staging folder.\n', encoding='utf-8')
         raise

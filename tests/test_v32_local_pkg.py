@@ -46,6 +46,30 @@ class LocalPKGTests(unittest.TestCase):
         self.assertTrue((self.work / 'BLUS12345' / 'NPUB12345' / 'PARAM.SFO').exists())
         self.assertTrue((Path(result['staging']) / 'LOCAL_BUILD_RESULT.txt').exists())
 
+    def test_disc_input_runs_the_selected_batch_on_a_copy(self):
+        from test_v20 import write_sfo
+
+        disc = self.work.parent / 'disc backup' / 'PS3_GAME'
+        disc.mkdir(parents=True)
+        write_sfo(disc / 'PARAM.SFO')
+        batch = b'@echo off\r\nCFW2OFW_Helper\r\npause>nul'
+        (self.kit / 'Retail2Pkg.bat').write_bytes(batch)
+
+        def builder(command, **kw):
+            stage = Path(kw['cwd'])
+            self.assertEqual(command[-1], 'Retail2Pkg.bat')
+            self.assertEqual((stage / 'Retail2Pkg.bat').read_bytes(), batch)
+            self.assertTrue((stage / 'PS3_GAME' / 'PARAM.SFO').is_file())
+            (stage / 'PS3_GAME' / 'PARAM.SFO').unlink()
+            (stage / 'Game.pkg').write_bytes(b'\x7fPKG' + b'X' * 100)
+            return SimpleNamespace(returncode=0, stdout='built', stderr='')
+
+        result = build_pkgs_locally(disc, self.kit, self.out, runner=builder)
+        self.assertTrue(result['success'])
+        self.assertTrue((disc / 'PARAM.SFO').is_file())
+        self.assertEqual((self.kit / 'Retail2Pkg.bat').read_bytes(), batch)
+        self.assertTrue((self.out / 'Game.pkg').is_file())
+
     def test_reject_output_inside_source(self):
         with self.assertRaisesRegex(ValueError, 'separate'):
             build_pkgs_locally(self.work, self.kit, self.work, runner=self._mockbuild)
