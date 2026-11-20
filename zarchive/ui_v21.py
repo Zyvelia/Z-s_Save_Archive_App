@@ -28,9 +28,13 @@ class TaskWorker(QThread):
         except Exception as e:self.error.emit(str(e))
 
 class PackageDialog(QDialog):
-    def __init__(self,parent=None,workspace='',retail_folder='',extractor=''):
+    def __init__(self,parent=None,workspace='',retail_folder='',extractor='', *, disc_only=False):
         super().__init__(parent);self.setWindowTitle('PS3 PKG Builder — Local or FTP');self.resize(950,700)
         self.worker=None;self.last_report=None
+        self.disc_only = disc_only
+        if disc_only:
+            self.setWindowTitle('Build PS3 PKGs from disc input')
+            self.resize(790, 485)
         self.extractor = QLineEdit(extractor)
         self.extractor.setPlaceholderText('Auto-detect if blank')
         self.staging = None
@@ -50,7 +54,7 @@ class PackageDialog(QDialog):
                 h=QHBoxLayout();h.addWidget(field,1)
                 btn=QPushButton('Browse…');btn.clicked.connect(action);h.addWidget(btn);form.addRow(label,h)
             else:form.addRow(label,field)
-        add('Game input / workspace',self.workspace,self.pick_workspace)
+        add('Disc ISO or PS3_GAME' if disc_only else 'Game input / workspace', self.workspace, self.pick_workspace)
         iso_button = QPushButton('Choose disc ISO…')
         iso_button.clicked.connect(lambda: self.pick_file(self.workspace, 'ISO (*.iso)'))
         form.addRow(iso_button)
@@ -58,6 +62,7 @@ class PackageDialog(QDialog):
             lambda: self.pick_file(self.extractor, 'Executables (*.exe)'))
         add('Retail2Pkg tools folder',self.retail_folder,self.pick_retail_folder)
         add('Local PKG output folder',self.local_output,self.pick_output_folder)
+        advanced_row = form.rowCount()
         add('PKG builder (.exe)',self.builder,lambda:self.pick_file(self.builder,'Executables (*.exe)'))
         add('Builder arguments',self.args)
         add('Produced PKG',self.pkg,lambda:self.pick_file(self.pkg,'PS3 packages (*.pkg)'))
@@ -90,6 +95,18 @@ class PackageDialog(QDialog):
         self.upload_btn=QPushButton('Optional: Upload PKG to PS3');self.upload_btn.clicked.connect(self.upload);local_buttons.addWidget(self.upload_btn)
         close=QPushButton('Close');close.clicked.connect(self.close);local_buttons.addWidget(close)
         self.log.appendPlainText('Use Build PKGs Locally to save completed packages to your PC. FTP is not necessary.\nFor direct-XMB installable PKGs, TrueAncestor PKG Repacker may be needed after CFW2OFW. Use Prepare TrueAncestor handoff to copy output to a new directory; it does not automatically build a PKG. TrueAncestor BACKUP Retailer is a different workflow.')
+        if disc_only:
+            title.setText('Build PS3 PKGs from disc input')
+            note.setText('The app extracts PS3_GAME from the ISO and runs your Retail2Pkg.bat beside it.')
+            for row in range(advanced_row, form.rowCount()):
+                form.setRowVisible(row, False)
+            for button in (self.inspect_btn, self.ta_btn, self.retail_btn, self.prepare_batch_btn,
+                           self.build_btn, self.upload_btn):
+                button.hide()
+            self.local_build_btn.setText('Build PKGs with Retail2Pkg.bat')
+            self.local_build_btn.setDefault(True)
+            self.log.clear()
+
     def pick_output_folder(self):
         folder=QFileDialog.getExistingDirectory(self,'Select local folder for finished PKGs')
         if folder:self.local_output.setText(folder)
@@ -99,6 +116,12 @@ class PackageDialog(QDialog):
         output=self.local_output.text().strip()
         if not workspace or not tools or not output:
             return QMessageBox.warning(self,'Missing folders','Select game input, Retail2Pkg folder and local output folder. FTP is not required.')
+        if self.disc_only:
+            source = Path(workspace)
+            if source.suffix.lower() != '.iso' and not (
+                source.is_dir() and (source.name.upper() == 'PS3_GAME' or (source / 'PS3_GAME').is_dir())
+            ):
+                return QMessageBox.warning(self, 'Disc input required', 'Choose the original ISO or PS3_GAME folder.')
         if not prepare_only and QMessageBox.question(self,'Build PKGs locally',
             'This creates a NEW independent staging copy, then executes Retail2Pkg.bat inside it.\n\n'
             'The third-party batch moves and deletes files inside the staging copy and may take a long time. '
@@ -373,7 +396,7 @@ class ConverterDialog(V20Dialog):
     def open_disc_package(self):
         if not self.conversion_busy():
             PackageDialog(self, self.source.text().strip(), self.retail2pkg_path.text().strip(),
-                          self.extractor.text().strip()).exec()
+                          self.extractor.text().strip(), disc_only=True).exec()
 
     def open_workspace_package(self):
         if self.conversion_busy():

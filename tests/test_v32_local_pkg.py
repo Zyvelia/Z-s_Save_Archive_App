@@ -94,6 +94,35 @@ class LocalPKGTests(unittest.TestCase):
                          (self.kit / 'Retail2Pkg.bat').read_bytes())
         self.assertTrue(iso.is_file())
 
+    def test_iso_to_pkg_extracts_before_running_the_batch(self):
+        from test_v20 import write_sfo
+
+        iso = self.out / 'disc.iso'
+        iso.write_bytes(b'\0' * 0x8001 + b'CD001')
+        extractor = self.kit / '7z.exe'
+        extractor.touch()
+        messages = []
+
+        def extract(command, cancelled):
+            destination = Path(next(arg[2:] for arg in command if arg.startswith('-o')))
+            game = destination / 'PS3_GAME'
+            game.mkdir()
+            write_sfo(game / 'PARAM.SFO')
+
+        def builder(command, **kwargs):
+            stage = Path(kwargs['cwd'])
+            for path in ('PS3_GAME/PARAM.SFO', 'CFW2OFW_Helper.exe', 'Retail2Pkg.bat'):
+                self.assertTrue((stage / path).is_file(), path)
+            self.assertIn('PS3_GAME is ready beside', '\n'.join(messages))
+            (stage / 'Disc.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+        with patch('zarchive.iso_converter_v20.extract_iso', side_effect=extract):
+            result = build_pkgs_locally(iso, self.kit, self.out, extractor=extractor,
+                                        runner=builder, progress=messages.append)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['packages'], [str(self.out / 'Disc.pkg')])
+
     def test_reject_output_inside_source(self):
         with self.assertRaisesRegex(ValueError, 'separate'):
             build_pkgs_locally(self.work, self.kit, self.work, runner=self._mockbuild)

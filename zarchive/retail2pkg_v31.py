@@ -5,6 +5,7 @@ the batch file renames, moves, and deletes directories. Prepare a separate copy
 instead, leaving actual execution to the user after inspecting the staged files.
 """
 from __future__ import annotations
+import os
 import shutil
 import subprocess
 import sys
@@ -148,6 +149,11 @@ def prepare_local_batch(workspace: str | Path, tool_folder: str | Path,
             raise ValueError('Select a disc ISO, a PS3_GAME folder or its parent, '
                              'or a conversion workspace containing conversion_manifest.json.')
         stage_conversion(source, toolkit['helper'], stage, extractor=extractor, progress=progress)
+        for relative in ('PS3_GAME/PARAM.SFO', 'CFW2OFW_Helper.exe', 'Retail2Pkg.bat'):
+            if not (stage / relative).is_file():
+                raise ValueError(f'Missing {relative} in the staged batch folder: {stage}')
+        if progress is not None:
+            progress('PS3_GAME is ready beside CFW2OFW_Helper.exe and Retail2Pkg.bat.')
     return {'staging': str(stage), 'output_folder': str(output)}
 
 
@@ -174,7 +180,12 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
     try:
         if runner is None:
             # This batch can pause, prompt via XCOPY, or open PS3Merge.
-            result = invoke(command, cwd=_batch_working_directory(stage),
+            working_dir = _batch_working_directory(stage)
+            env = dict(os.environ)
+            # Resolve the helper and packers from this run even on Windows
+            # systems that disable searching the current directory for commands.
+            env['PATH'] = str(working_dir) + os.pathsep + env.get('PATH', '')
+            result = invoke(command[:-1] + [r'.\Retail2Pkg.bat'], cwd=working_dir, env=env,
                             creationflags=subprocess.CREATE_NEW_CONSOLE,
                             timeout=timeout, check=False)
         else:
