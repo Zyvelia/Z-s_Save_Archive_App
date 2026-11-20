@@ -65,6 +65,31 @@ static void temperature(u32 sensor, char *value, size_t capacity)
         snprintf(value, capacity, "UNAVAILABLE");
 }
 
+static s32 read_disk_free(const char *path, u64 *total, u64 *available)
+{
+    /* LV2 returns bytes directly, without the cellFsGetFreeSize wrapper. */
+    lv2syscall3(840, (u32)(u64)path, (u32)(u64)total, (u32)(u64)available);
+    return_to_user_prog(s32);
+}
+
+static void read_internal_storage(char *value, size_t capacity)
+{
+    u64 total = 0;
+    u64 available = 0;
+    startup_log("Querying internal storage via LV2", false);
+    s32 result = read_disk_free("/dev_hdd0", &total, &available);
+    if (result != 0 || !total || available > total) {
+        snprintf(value, capacity, "UNAVAILABLE");
+        startup_log("Internal storage query returned no valid reading", false);
+        return;
+    }
+    const u64 gib = 1024ull * 1024 * 1024;
+    snprintf(value, capacity, "%llu.%u GIB",
+             (unsigned long long)(available / gib),
+             (unsigned)((available % gib) * 10 / gib));
+    startup_log("Internal storage query completed", false);
+}
+
 static bool init_video(void)
 {
     const u32 alignment = 1024 * 1024;
@@ -133,7 +158,7 @@ static void text(u32 *buffer, unsigned x, unsigned y, unsigned scale,
     }
 }
 
-static void draw_stats(u32 *buffer, char values[3][32], bool sensors_enabled)
+static void draw_stats(u32 *buffer, char values[3][32], bool sensors_enabled, bool storage_checked)
 {
     const char *labels[] = {"CELL TEMPERATURE", "RSX TEMPERATURE", "FREE INTERNAL STORAGE"};
     const unsigned w = resolution.width;
@@ -149,7 +174,9 @@ static void draw_stats(u32 *buffer, char values[3][32], bool sensors_enabled)
         text(buffer, x + w / 40, y + h * 8 / 100, scale + 1, 0xffffffff, values[i]);
     }
     if (!sensors_enabled)
-        text(buffer, x, h * 81 / 100, scale, 0xffa8e8cf, "CROSS TO ENABLE TEMPERATURES");
+        text(buffer, x, h * 78 / 100, scale, 0xffa8e8cf, "CROSS TO ENABLE TEMPERATURES");
+    if (!storage_checked)
+        text(buffer, x, h * 83 / 100, scale, 0xffa8e8cf, "SQUARE TO CHECK STORAGE");
     text(buffer, x, h * 88 / 100, scale, 0xffc4cfe0, "CIRCLE TO EXIT");
 }
 
@@ -161,9 +188,10 @@ static void sysutil_event(u64 status, u64 param, void *user)
         running = false;
 }
 
-static bool read_buttons(bool screen_ready, bool *enable_temperatures)
+static bool read_buttons(bool screen_ready, bool *enable_temperatures, bool *check_storage)
 {
     static bool cross_released[MAX_PADS];
+    static bool square_released[MAX_PADS];
     padInfo info = {0};
     if (ioPadGetInfo(&info) != 0)
         return false;
@@ -176,14 +204,18 @@ static bool read_buttons(bool screen_ready, bool *enable_temperatures)
                 cross_released[i] = true;
             else if (screen_ready && cross_released[i])
                 *enable_temperatures = true;
+            if (screen_ready && !data.BTN_SQUARE)
+                square_released[i] = true;
+            else if (screen_ready && square_released[i])
+                *check_storage = true;
         }
     }
     return false;
 }
 
-static bool present(unsigned back, char values[3][32], bool sensors_enabled)
+static bool present(unsigned back, char values[3][32], bool sensors_enabled, bool storage_checked)
 {
-    draw_stats(buffers[back], values, sensors_enabled);
+    draw_stats(buffers[back], values, sensors_enabled, storage_checked);
     __asm__ volatile ("sync" ::: "memory");
     gcmResetFlipStatus();
     if (gcmSetFlip(context, back) != 0)
@@ -195,7 +227,7 @@ static bool present(unsigned back, char values[3][32], bool sensors_enabled)
 
 int main(void)
 {
-    startup_log("PS3 Stats 1.2 starting", true);
+    startup_log("PS3 Stats 1.3 starting", true);
     if (!init_video() || ioPadInit(MAX_PADS) != 0)
         return 1;
     if (sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sysutil_event, NULL) != 0) {
@@ -204,11 +236,13 @@ int main(void)
         return 1;
     }
 
-    char values[3][32] = {"PAUSED", "PAUSED", "UNAVAILABLE"};
+    char values[3][32] = {"PAUSED", "PAUSED", "NOT CHECKED"};
     unsigned front = 0;
     bool sensors_enabled = false;
     bool first_temperature = true;
-    bool pending = present(front, values, sensors_enabled);
+    bool storage_requested = false;
+    bool storage_checked = false;
+    bool pending = present(front, values, sensors_enabled, storage_checked);
     s64 submitted = sysGetSystemTime();
     s64 last_update = 0;
     bool first_read = true;
@@ -218,7 +252,7 @@ int main(void)
     }
     while (running) {
         sysUtilCheckCallback();
-        if (!running || read_buttons(!first_read, &sensors_enabled))
+        if (!running || read_buttons(!first_read, &sensors_enabled, &storage_requested))
             break;
 
         s64 now = sysGetSystemTime();
@@ -230,7 +264,8 @@ int main(void)
                 break;
             }
         }
-        if (!pending && (first_read || (sensors_enabled && first_temperature) ||
+        const bool check_storage = storage_requested && !storage_checked;
+        if (!pending && (first_read || check_storage || (sensors_enabled && first_temperature) ||
                          now - last_update >= 1000000)) {
             if (sensors_enabled) {
                 if (first_temperature)
@@ -246,8 +281,12 @@ int main(void)
             if (first_read)
                 startup_log("First display flip completed", false);
             first_read = false;
+            if (check_storage) {
+                read_internal_storage(values[2], sizeof(values[2]));
+                storage_checked = true;
+            }
             front ^= 1;
-            if (!present(front, values, sensors_enabled)) {
+            if (!present(front, values, sensors_enabled, storage_checked)) {
                 startup_log("Display flip could not be submitted", false);
                 break;
             }
