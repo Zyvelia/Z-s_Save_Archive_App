@@ -1,5 +1,5 @@
 #define AppName "Z's Save Archive"
-#define AppVersion "3.6.6"
+#define AppVersion "3.6.7"
 #define AppExe "ZSaveArchive.exe"
 
 [Setup]

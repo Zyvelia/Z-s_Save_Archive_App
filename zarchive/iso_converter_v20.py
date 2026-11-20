@@ -79,9 +79,10 @@ def inspect_iso(path: str | Path) -> dict:
     if not iso.is_file() or iso.suffix.lower() != '.iso':
         raise ValueError('Select an existing .iso file')
     with iso.open('rb') as f:
-        magic = f.read(0x9000)
-    if b'CD001' not in magic:
-        raise ValueError('ISO9660 signature not detected; verify your ISO before extraction')
+        magic = f.read(0x10000)
+    if b'CD001' not in magic and not any(magic[offset + 1:offset + 6] in {b'NSR02', b'NSR03'}
+               for offset in range(0x8000, len(magic), 2048)):
+        raise ValueError('ISO 9660 or UDF signature not detected; verify your ISO before extraction')
     return {'name': iso.name, 'bytes': iso.stat().st_size, 'source': str(iso), 'note':'ISO extraction is performed by a separately installed 7-Zip command-line tool; encrypted disc images may not extract.'}
 
 

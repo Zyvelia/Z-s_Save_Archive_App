@@ -14,12 +14,13 @@ from .converter_output_v21 import (inspect_conversion_output,run_builder,upload_
 from .trueancestor_v25 import prepare_trueancestor
 from .workspace_history import workspace_history
 from .console_v27 import summarize_transfer
-from .retail2pkg_v31 import inspect_retail2pkg_folder, prepare_retail2pkg_handoff, build_pkgs_locally
+from .retail2pkg_v31 import inspect_retail2pkg_folder, prepare_retail2pkg_handoff, build_pkgs_locally, prepare_local_batch
 
 class TaskWorker(QThread):
     done=Signal(object)
     error=Signal(str)
     progress=Signal(object,object)
+    message=Signal(str)
     def __init__(self,fn,*args,**kwargs):
         super().__init__();self.fn=fn;self.args=args;self.kwargs=kwargs
     def run(self):
@@ -30,7 +31,9 @@ class PackageDialog(QDialog):
     def __init__(self,parent=None,workspace='',retail_folder='',extractor=''):
         super().__init__(parent);self.setWindowTitle('PS3 PKG Builder — Local or FTP');self.resize(950,700)
         self.worker=None;self.last_report=None
-        self.extractor = extractor
+        self.extractor = QLineEdit(extractor)
+        self.extractor.setPlaceholderText('Auto-detect if blank')
+        self.staging = None
         outer=QVBoxLayout(self)
         title=QLabel('Create PKGs on your PC — FTP upload is optional')
         title.setStyleSheet('font-size:17px;font-weight:600');outer.addWidget(title)
@@ -51,6 +54,8 @@ class PackageDialog(QDialog):
         iso_button = QPushButton('Choose disc ISO…')
         iso_button.clicked.connect(lambda: self.pick_file(self.workspace, 'ISO (*.iso)'))
         form.addRow(iso_button)
+        add('7-Zip for ISO input', self.extractor,
+            lambda: self.pick_file(self.extractor, 'Executables (*.exe)'))
         add('Retail2Pkg tools folder',self.retail_folder,self.pick_retail_folder)
         add('Local PKG output folder',self.local_output,self.pick_output_folder)
         add('PKG builder (.exe)',self.builder,lambda:self.pick_file(self.builder,'Executables (*.exe)'))
@@ -72,8 +77,15 @@ class PackageDialog(QDialog):
         self.inspect_btn=QPushButton('Inspect output');self.inspect_btn.clicked.connect(self.inspect);buttons.addWidget(self.inspect_btn)
         self.ta_btn=QPushButton('Prepare TrueAncestor handoff');self.ta_btn.clicked.connect(self.trueancestor);buttons.addWidget(self.ta_btn)
         self.retail_btn=QPushButton('Prepare Retail2Pkg handoff');self.retail_btn.clicked.connect(self.retail_handoff);buttons.addWidget(self.retail_btn)
+        self.prepare_batch_btn = QPushButton('Prepare batch folder')
+        self.prepare_batch_btn.clicked.connect(lambda: self.build_local(prepare_only=True))
+        buttons.addWidget(self.prepare_batch_btn)
+        self.open_stage_btn = QPushButton('Open batch folder')
+        self.open_stage_btn.setEnabled(False)
+        self.open_stage_btn.clicked.connect(self.open_stage)
+        buttons.addWidget(self.open_stage_btn)
         local_buttons=QHBoxLayout();outer.addLayout(local_buttons)
-        self.local_build_btn=QPushButton('Build PKGs Locally (No FTP)');self.local_build_btn.clicked.connect(self.build_local);local_buttons.addWidget(self.local_build_btn)
+        self.local_build_btn=QPushButton('Build PKGs Locally (No FTP)');self.local_build_btn.clicked.connect(lambda: self.build_local());local_buttons.addWidget(self.local_build_btn)
         self.build_btn=QPushButton('Run custom .exe builder');self.build_btn.clicked.connect(self.build);local_buttons.addWidget(self.build_btn)
         self.upload_btn=QPushButton('Optional: Upload PKG to PS3');self.upload_btn.clicked.connect(self.upload);local_buttons.addWidget(self.upload_btn)
         close=QPushButton('Close');close.clicked.connect(self.close);local_buttons.addWidget(close)
@@ -81,18 +93,26 @@ class PackageDialog(QDialog):
     def pick_output_folder(self):
         folder=QFileDialog.getExistingDirectory(self,'Select local folder for finished PKGs')
         if folder:self.local_output.setText(folder)
-    def build_local(self):
+    def build_local(self, *, prepare_only=False):
         workspace=self.workspace.text().strip()
         tools=self.retail_folder.text().strip()
         output=self.local_output.text().strip()
         if not workspace or not tools or not output:
             return QMessageBox.warning(self,'Missing folders','Select game input, Retail2Pkg folder and local output folder. FTP is not required.')
-        if QMessageBox.question(self,'Build PKGs locally',
+        if not prepare_only and QMessageBox.question(self,'Build PKGs locally',
             'This creates a NEW independent staging copy, then executes Retail2Pkg.bat inside it.\n\n'
             'The third-party batch moves and deletes files inside the staging copy and may take a long time. '
             'Watch the Windows console for prompts and close it using the batch’s final key prompt. Continue?') != QMessageBox.StandardButton.Yes:return
-        self.log.appendPlainText('Preparing a copy. Respond to prompts in the Retail2Pkg console when it opens.')
-        self.begin(TaskWorker(build_pkgs_locally,workspace,tools,output,extractor=self.extractor or None))
+        self.log.appendPlainText('Preparing the Retail2Pkg batch folder…')
+        task = prepare_local_batch if prepare_only else build_pkgs_locally
+        worker = TaskWorker(task, workspace, tools, output,
+                            extractor=self.extractor.text().strip() or None)
+        worker.kwargs['progress'] = worker.message.emit
+        self.begin(worker)
+
+    def open_stage(self):
+        if self.staging and not QDesktopServices.openUrl(QUrl.fromLocalFile(self.staging)):
+            QMessageBox.warning(self, 'Folder unavailable', self.staging)
     def pick_retail_folder(self):
         folder=QFileDialog.getExistingDirectory(self,'Select extracted Retail2Pkg folder')
         if not folder:return
@@ -133,13 +153,20 @@ class PackageDialog(QDialog):
     def begin(self,worker):
         if self.worker and self.worker.isRunning():return QMessageBox.information(self,'Busy','An operation is already running.')
         self.worker=worker
-        for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn):button.setEnabled(False)
+        for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn,self.prepare_batch_btn):button.setEnabled(False)
+        self.worker.message.connect(self.log.appendPlainText)
         self.worker.done.connect(self.finished);self.worker.error.connect(self.failed);self.worker.finished.connect(self.enable_controls)
         self.worker.start()
     def enable_controls(self):
-        for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn):button.setEnabled(True)
+        for button in (self.inspect_btn,self.ta_btn,self.retail_btn,self.local_build_btn,self.build_btn,self.upload_btn,self.prepare_batch_btn):button.setEnabled(True)
     def finished(self,result):
-        if 'output_folder' in result:
+        if 'staging' in result:
+            self.staging = result['staging']
+            self.open_stage_btn.setEnabled(True)
+        if 'staging' in result and 'packages' not in result:
+            self.log.appendPlainText(f"Batch folder ready: {self.staging}\n"
+                                     "Click Open batch folder and run Retail2Pkg.bat there.")
+        elif 'output_folder' in result:
             self.log.appendPlainText('Local PKG build: '+('Completed' if result['success'] else 'No valid packages produced')+'\nStaging: '+result['staging']+'\nSaved to: '+result['output_folder']+'\nPackages: '+(', '.join(result['packages']) or 'none')+'\n'+result['warning']+'\nBuilder log:\n'+result['log'])
             if result['packages']:
                 self.workspace.setText(result['output_folder'])

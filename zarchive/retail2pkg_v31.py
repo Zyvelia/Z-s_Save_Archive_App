@@ -125,24 +125,16 @@ def _batch_working_directory(stage: Path) -> Path:
                      'Choose a local output folder with a simple path, such as C:\\PS3Build.')
 
 
-def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
-                       output_folder: str | Path, *, timeout: int = 7200,
-                       runner=None, extractor: str | Path | None = None) -> dict:
-    """Run the chosen Retail2Pkg batch on an isolated copy of disc input or converted output.
-
-    This is an explicit opt-in to execute the user's third-party batch file.
-    The batch manipulates and removes its own working directories; originals
-    remain untouched. Produced PKGs are copied to the selected local folder.
-    """
-    if sys.platform != 'win32' and runner is None:
-        raise OSError('Retail2Pkg batch execution requires Windows')
+def prepare_local_batch(workspace: str | Path, tool_folder: str | Path,
+                        output_folder: str | Path, *, extractor=None, progress=None) -> dict:
+    """Prepare a runnable copy of the selected Retail2Pkg kit and game."""
     source = Path(workspace).expanduser().resolve(strict=True)
     kit = Path(tool_folder).expanduser().resolve(strict=True)
     output = Path(output_folder).expanduser().resolve(strict=True)
     if not output.is_dir() or output.is_symlink():
         raise ValueError('Select an existing normal folder for local PKG output')
     for origin in (source, kit):
-        if output == origin or output in origin.parents or origin in output.parents:
+        if output == origin or origin in output.parents or (origin.is_dir() and output in origin.parents):
             raise ValueError('The PKG output folder must be separate from the conversion workspace and toolkit')
     # Isolated stage is never reused, avoiding accidental deletion of earlier builds.
     stage = output / ('Retail2Pkg_Build_' + uuid.uuid4().hex[:12])
@@ -155,10 +147,30 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
         if source.is_dir() and source.name.upper() != 'PS3_GAME' and not (source / 'PS3_GAME').is_dir():
             raise ValueError('Select a disc ISO, a PS3_GAME folder or its parent, '
                              'or a conversion workspace containing conversion_manifest.json.')
-        stage_conversion(source, toolkit['helper'], stage, extractor=extractor)
+        stage_conversion(source, toolkit['helper'], stage, extractor=extractor, progress=progress)
+    return {'staging': str(stage), 'output_folder': str(output)}
+
+
+def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
+                       output_folder: str | Path, *, timeout: int = 7200,
+                       runner=None, extractor: str | Path | None = None, progress=None) -> dict:
+    """Run the chosen Retail2Pkg batch on an isolated copy of disc input or converted output.
+
+    This is an explicit opt-in to execute the user's third-party batch file.
+    The batch manipulates and removes its own working directories; originals
+    remain untouched. Produced PKGs are copied to the selected local folder.
+    """
+    if sys.platform != 'win32' and runner is None:
+        raise OSError('Retail2Pkg batch execution requires Windows')
+    prepared = prepare_local_batch(workspace, tool_folder, output_folder, extractor=extractor,
+                                   progress=progress)
+    stage = Path(prepared['staging'])
+    output = Path(prepared['output_folder'])
     previous_packages = {path for path in stage.rglob('*') if path.suffix.lower() == '.pkg'}
     command = ['cmd.exe', '/d', '/c', 'call', 'Retail2Pkg.bat']
     invoke = runner or subprocess.run
+    if progress is not None:
+        progress(f'Running Retail2Pkg.bat in {stage}. Follow prompts in its console.')
     try:
         if runner is None:
             # This batch can pause, prompt via XCOPY, or open PS3Merge.
@@ -169,9 +181,8 @@ def build_pkgs_locally(workspace: str | Path, tool_folder: str | Path,
             result = invoke(command, cwd=stage, stdin=subprocess.DEVNULL,
                             capture_output=True, text=True, errors='replace',
                             timeout=timeout, check=False)
-    except Exception:
-        (stage / 'BUILD_FAILED.txt').write_text('The external builder raised an error; inspect this staging folder.\n', encoding='utf-8')
-        raise
+    except Exception as exc:
+        raise RuntimeError(f'{exc}\nStaging folder: {stage}') from exc
     log = ((result.stdout or '') + '\n' + (result.stderr or ''))[-30000:]
     packages = sorted(path for path in stage.rglob('*')
                       if path.suffix.lower() == '.pkg' and path not in previous_packages)

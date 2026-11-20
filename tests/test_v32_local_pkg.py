@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from zarchive.retail2pkg_v31 import REQUIRED_FILES, build_pkgs_locally
+from zarchive.retail2pkg_v31 import REQUIRED_FILES, build_pkgs_locally, prepare_local_batch
 
 
 class LocalPKGTests(unittest.TestCase):
@@ -69,6 +69,30 @@ class LocalPKGTests(unittest.TestCase):
         self.assertTrue((disc / 'PARAM.SFO').is_file())
         self.assertEqual((self.kit / 'Retail2Pkg.bat').read_bytes(), batch)
         self.assertTrue((self.out / 'Game.pkg').is_file())
+
+    def test_prepare_batch_folder_from_udf_iso(self):
+        from test_v20 import write_sfo
+
+        iso = self.out / 'game.iso'
+        iso.write_bytes(b'\0' * 0x8001 + b'NSR03')
+        extractor = self.kit / '7z.exe'
+        extractor.touch()
+
+        def extract(command, cancelled):
+            self.assertEqual(Path(command[0]), extractor)
+            self.assertEqual(Path(command[-1]), iso)
+            destination = Path(next(arg[2:] for arg in command if arg.startswith('-o')))
+            game = destination / 'PS3_GAME'
+            game.mkdir()
+            write_sfo(game / 'PARAM.SFO')
+
+        with patch('zarchive.iso_converter_v20.extract_iso', side_effect=extract):
+            result = prepare_local_batch(iso, self.kit, self.out, extractor=extractor)
+        staged = Path(result['staging'])
+        self.assertTrue((staged / 'PS3_GAME' / 'PARAM.SFO').is_file())
+        self.assertEqual((staged / 'Retail2Pkg.bat').read_bytes(),
+                         (self.kit / 'Retail2Pkg.bat').read_bytes())
+        self.assertTrue(iso.is_file())
 
     def test_reject_output_inside_source(self):
         with self.assertRaisesRegex(ValueError, 'separate'):
