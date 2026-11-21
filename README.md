@@ -87,15 +87,13 @@ Open **PS3 PKG Inspect and Upload** to inspect an existing package or upload it 
 
 ### Build a PKG from a PS3 disc ISO
 
-Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose a readable, decrypted PS3 disc ISO, your Retail2Pkg folder or ZIP, and an output folder on a local drive. Click **Extract ISO and build PKGs**. Windows mounts the ISO read-only, copies `PS3_GAME` to a fresh working folder, and makes the copied files writable for Retail2Pkg. This workflow uses Windows and Robocopy. The separate XMB Assistant still supports 7-Zip and WinRAR.
-
-Watch the build log in Save Archive and use the Windows console if the helper asks for input. If PS3Merge opens, select the working folder shown in the log. The app copies valid packages to your output folder after a successful batch run. If the toolkit reports `MSVCR120.dll` missing, install the [Visual C++ 2013 Redistributable (x86)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#visual-studio-2013-vc-120), including on 64-bit Windows.
+Open **PS3 Tools → Retail2Pkg ISO Launcher v3**, select your launcher ZIP, and click **Open Retail2Pkg launcher**. The launcher asks for the ISO and output folder. It mounts the ISO read-only, copies `PS3_GAME` into a fresh run folder, runs the included batch, and opens the package folder when both the game and update PKGs are present. The launcher uses its own console and Windows file pickers.
 
 ### PS3 Stats homebrew
 
 The standalone XMB app shows CELL and RSX temperatures when enabled. Version 1.3 checks free internal storage when you press Square. See [PS3 Stats](ps3-stats/README.md) for build, installation, and hardware verification instructions.
 
-Download the [Save Archive v3.6.14 desktop source ZIP](downloads/Z_Save_Archive_v3.6.14_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
+Download the [Save Archive v3.6.15 desktop source ZIP](downloads/Z_Save_Archive_v3.6.15_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
 
 ### GitHub Manager
 

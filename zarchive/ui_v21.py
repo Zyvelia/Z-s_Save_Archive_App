@@ -12,7 +12,7 @@ from .ui_v04 import STYLE
 from .editor_v18 import ArchiveV18
 from .converter_output_v21 import (inspect_conversion_output,upload_pkg_ftp,validate_pkg)
 from .workspace_history import workspace_history
-from .retail2pkg_v31 import build_pkgs_locally
+from .retail2pkg_v31 import run_launcher
 from .console_v27 import summarize_transfer
 
 class TaskWorker(QThread):
@@ -25,135 +25,64 @@ class TaskWorker(QThread):
         try:self.done.emit(self.fn(*self.args,**self.kwargs))
         except Exception as e:self.error.emit(str(e))
 
-class DiscPackageWorker(TaskWorker):
-    message = Signal(str)
-    extraction_percent = Signal(int)
-    console_status = Signal(str)
-
-    def __init__(self, iso, toolkit, output):
-        super().__init__(build_pkgs_locally, iso, toolkit, output)
-        self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit,
-                           console_status=self.console_status.emit)
-
-
 class DiscPackageDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('ISO → PKG (Retail2Pkg)')
-        self.resize(780, 480)
+        self.setWindowTitle('Retail2Pkg ISO Launcher v3')
+        self.resize(620, 180)
         self.worker = None
-        self.output_path = None
         layout = QVBoxLayout(self)
-        form = QFormLayout()
-        layout.addLayout(form)
+        instructions = QLabel('Choose your Retail2Pkg ISO Launcher v3 ZIP. The launcher opens its own '
+                              'ISO and output-folder pickers and shows progress in its console.')
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
 
-        def add(label, *choices):
-            field = QLineEdit()
-            row = QHBoxLayout()
-            row.addWidget(field, 1)
-            for caption, choose in choices:
-                button = QPushButton(caption)
-                button.clicked.connect(lambda _, picker=choose: self.choose_path(field, picker))
-                row.addWidget(button)
-            form.addRow(label, row)
-            return field
+        row = QHBoxLayout()
+        self.archive = QLineEdit()
+        browse = QPushButton('Browse ZIP…')
+        browse.clicked.connect(self.choose_archive)
+        row.addWidget(self.archive, 1)
+        row.addWidget(browse)
+        layout.addLayout(row)
 
-        self.iso = add('PS3 disc ISO', ('Browse…', lambda: self.pick_file('PS3 disc ISO (*.iso)')))
-        self.toolkit = add('Retail2Pkg toolkit',
-                           ('Folder…', lambda: QFileDialog.getExistingDirectory(self, 'Choose Retail2Pkg folder')),
-                           ('ZIP…', lambda: self.pick_file('Retail2Pkg ZIP (*.zip)')))
-        self.output = add('Save PKGs to', ('Browse…', lambda: QFileDialog.getExistingDirectory(self, 'Choose PKG output folder')))
-        self.extraction = QProgressBar()
-        self.extraction.setFormat('Ready to extract ISO')
-        self.extraction.setValue(0)
-        layout.addWidget(self.extraction)
-        self.batch_status = QLabel()
-        self.batch_status.setWordWrap(True)
-        self.batch_status.setTextFormat(Qt.TextFormat.PlainText)
-        layout.addWidget(self.batch_status)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        layout.addWidget(self.log, 1)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
 
         buttons = QHBoxLayout()
-        layout.addLayout(buttons)
-        self.build_button = QPushButton('Extract ISO and build PKGs')
-        self.build_button.clicked.connect(self.start_build)
-        self.output_button = QPushButton('Open output folder')
-        self.output_button.setEnabled(False)
-        self.output_button.clicked.connect(self.open_output)
+        self.launch_button = QPushButton('Open Retail2Pkg launcher')
+        self.launch_button.clicked.connect(self.start_launcher)
         close = QPushButton('Close')
         close.clicked.connect(self.close)
-        for button in (self.build_button, self.output_button, close):
-            buttons.addWidget(button)
+        buttons.addWidget(self.launch_button)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
 
-    def choose_path(self, field, picker):
-        path = picker()
+    def choose_archive(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose Retail2Pkg ISO Launcher v3', '', 'ZIP archives (*.zip)')
         if path:
-            field.setText(path)
+            self.archive.setText(path)
 
-    def pick_file(self, file_filter):
-        return QFileDialog.getOpenFileName(self, 'Choose file', '', file_filter)[0]
-
-    def start_build(self):
-        iso, toolkit, output = (
-            field.text().strip() for field in (self.iso, self.toolkit, self.output)
-        )
-        if not (iso and toolkit and output):
-            QMessageBox.warning(self, 'Missing build input', 'Choose the ISO, Retail2Pkg toolkit and output folder.')
+    def start_launcher(self):
+        archive = self.archive.text().strip()
+        if not archive:
+            self.choose_archive()
+            archive = self.archive.text().strip()
+        if not archive:
             return
-        if QMessageBox.question(
-            self, 'Run Retail2Pkg.bat',
-            'Run the selected toolkit on a fresh copy of PS3_GAME? The app shows the batch log. Use '
-            'the Windows console if the batch asks you to press a key.'
-        ) != QMessageBox.StandardButton.Yes:
-            return
-        self.extraction.setRange(0, 100)
-        self.extraction.setFormat('Preparing build…')
-        self.extraction.setValue(0)
-        self.batch_status.clear()
-        self.log.clear()
-        self.build_button.setEnabled(False)
-        self.output_button.setEnabled(False)
-        self.worker = DiscPackageWorker(iso, toolkit, output)
-        self.worker.message.connect(self.log.appendPlainText)
-        self.worker.extraction_percent.connect(self.show_extraction_progress)
-        self.worker.console_status.connect(self.batch_status.setText)
-        self.worker.done.connect(self.show_result)
-        self.worker.error.connect(self.show_error)
-        self.worker.finished.connect(lambda: self.build_button.setEnabled(True))
+        self.status.setText('Opening the Retail2Pkg launcher…')
+        self.launch_button.setEnabled(False)
+        self.worker = TaskWorker(run_launcher, archive)
+        self.worker.done.connect(self.launcher_closed)
+        self.worker.error.connect(self.status.setText)
+        self.worker.finished.connect(self.enable_launch)
         self.worker.start()
 
-    def show_extraction_progress(self, percent):
-        if percent == 0:
-            self.extraction.setRange(0, 0)
-        else:
-            self.extraction.setRange(0, 100)
-            self.extraction.setFormat('ISO extraction complete')
-            self.extraction.setValue(percent)
+    def launcher_closed(self, result):
+        self.status.setText('The launcher closed. It opens the package folder after a successful build.')
 
-    def show_result(self, result):
-        self.output_path = result['output_folder'] if result['success'] else result['staging']
-        self.output_button.setText('Open output folder' if result['success'] else 'Open working folder')
-        self.output_button.setEnabled(True)
-        if result['success']:
-            paths = '\n'.join(result['packages'])
-            self.log.appendPlainText(f'Saved PKGs:\n{paths}')
-        else:
-            self.log.appendPlainText(f"Retail2Pkg did not yield a build to copy. Check {result['staging']}.")
-
-    def show_error(self, error):
-        if self.extraction.maximum() == 0:
-            self.extraction.setRange(0, 100)
-            self.extraction.setFormat('ISO extraction failed')
-            self.extraction.setValue(0)
-        elif self.extraction.value() == 0:
-            self.extraction.setFormat('Build stopped')
-        self.batch_status.clear()
-        self.log.appendPlainText(f'Build stopped: {error}')
-
-    def open_output(self):
-        QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_path))
+    def enable_launch(self):
+        self.launch_button.setEnabled(True)
 
     def reject(self):
         if not (self.worker and self.worker.isRunning()):
@@ -444,7 +373,7 @@ class Window(V20Window):
                 action.triggered.disconnect()
                 action.triggered.connect(lambda:ConverterDialog(self).exec())
         menu.addSeparator()
-        menu.addAction('ISO → PKG (Retail2Pkg)', lambda: DiscPackageDialog(self).exec())
+        menu.addAction('Retail2Pkg ISO Launcher v3', lambda: DiscPackageDialog(self).exec())
         menu.addAction('PS3 PKG Inspect and Upload',lambda:PackageDialog(self).exec())
 
 def main():
