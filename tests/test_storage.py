@@ -2,6 +2,8 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from zarchive.editor_v18 import ArchiveV18
 from zarchive.storage import Archive, discover_saves, folder_digest, read_param_sfo
 
 
@@ -57,5 +59,67 @@ class Tests(unittest.TestCase):
     def test_no_meta(self):
         (self.source/'PARAM.SFO').unlink()
         with self.assertRaises(ValueError):self.db.import_save(self.source)
+
+    def test_remove_saves_deletes_only_selected_archived_copies(self):
+        first = self.db.import_save(self.source)
+        local_file = self.home / 'DATA2.BIN'
+        local_file.write_bytes(b'other save')
+        second = self.db.import_ps4_save(local_file, 'Second game')
+        third = self.db.import_pc_save(local_file, 'Third game')
+
+        count, remaining = self.db.remove_saves([first['id'], second['id'], first['id']])
+        self.assertEqual((count, remaining), (2, []))
+        self.assertEqual([row['id'] for row in self.db.list_saves()], [third['id']])
+        for record in (first, second):
+            self.assertFalse((self.db.root / record['stored_path']).exists())
+        self.assertEqual((self.source / 'DATA.BIN').read_bytes(), b'example save data')
+        self.assertEqual(local_file.read_bytes(), b'other save')
+        self.assertEqual(self.db.remove_saves([second['id']]), (0, []))
+        self.db.import_save(self.source)
+
+    def test_failed_batch_reinstates_archived_files_and_entries(self):
+        first = self.db.import_save(self.source)
+        second = self.db.import_pc_save(self.source, 'Second game')
+        delete_record = self.db._delete_save_record
+
+        def fail_second(record_id):
+            if record_id == second['id']:
+                raise OSError('simulated failure')
+            delete_record(record_id)
+
+        with patch.object(self.db, '_delete_save_record', side_effect=fail_second):
+            with self.assertRaisesRegex(OSError, 'simulated failure'):
+                self.db.remove_saves([first['id'], second['id']])
+        self.assertEqual(len(self.db.list_saves()), 2)
+        self.assertTrue(all((self.db.root / row['stored_path']).is_dir() for row in (first, second)))
+
+    def test_reopening_archive_recovers_staged_copy_for_indexed_save(self):
+        record = self.db.import_save(self.source)
+        original = self.db.root / record['stored_path']
+        pending = original.with_name('.removing-' + record['id'])
+        original.rename(pending)
+        other = Archive(self.db.root)
+        try:
+            self.assertTrue(original.is_dir())
+            self.assertFalse(pending.exists())
+            self.assertEqual(other.list_saves()[0]['id'], record['id'])
+        finally:
+            other.close()
+
+    def test_removing_save_with_edit_history_preserves_backup_and_output(self):
+        archive = ArchiveV18(self.home / 'extended')
+        self.addCleanup(archive.close)
+        save = archive.import_save(self.source)
+        backup = archive.make_backup(save['id'])
+        output = self.home / 'edited.bin'
+        output.write_bytes(b'edited copy')
+        with archive.conn:
+            archive.conn.execute('INSERT INTO edits_v18 VALUES (?,?,?,?,?,?,?,?)',
+                                 ('edit', save['id'], 'editor', str(backup), str(output), 'old', 'new', 'now'))
+        self.assertEqual(archive.remove_saves([save['id']]), (1, []))
+        self.assertFalse(archive.list_saves())
+        self.assertFalse(archive.conn.execute('SELECT 1 FROM edits_v18').fetchone())
+        self.assertTrue(backup.is_file())
+        self.assertEqual(output.read_bytes(), b'edited copy')
 
 if __name__=='__main__':unittest.main()

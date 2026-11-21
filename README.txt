@@ -49,6 +49,15 @@ a storefront to narrow the scan. Review the checked folders and click
 Import selected saves to copy them into the archive. Re-running the scan
 skips identical saves already archived.
 
+Removing archived saves
+-----------------------
+
+Open Saves & Backups > Browse Saves, select one save or use Ctrl/Shift to select
+several, then choose Remove from Archive in the inspector or right-click menu.
+Confirm to delete the archived copies and their entries. Original saves and
+existing backup ZIP files are preserved. Versioned ZIPs for removed entries
+remain in the archive's backups folder.
+
 PS4 saves
 ---------
 

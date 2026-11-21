@@ -84,6 +84,10 @@ class ArchiveV18(ArchiveV17):
             created_at TEXT NOT NULL, FOREIGN KEY(save_id) REFERENCES saves(id));
         ''')
 
+    def _delete_save_record(self, record_id):
+        self.conn.execute('DELETE FROM edits_v18 WHERE save_id=?', (record_id,))
+        super()._delete_save_record(record_id)
+
     def install_editor(self,definition):
         validate_definition(definition)
         with self.conn:self.conn.execute('INSERT INTO editors_v18(id,definition) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET definition=excluded.definition',
