@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QProgressBar, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .ps4_fpkg import CATEGORIES, build_packages, scan_dumps, validate_tool
+from .ps4_fpkg import CATEGORIES, build_packages, scan_build_inputs, validate_tool
 
 
 class DirectoryInput(QLineEdit):
@@ -57,6 +57,7 @@ class FpkgPanel(QWidget):
         self.worker = None
         self.dump_items = []
         self.scan_path = None
+        self.nearby_gp4s = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 23, 25, 19)
         layout.setSpacing(12)
@@ -91,8 +92,8 @@ class FpkgPanel(QWidget):
         self.base_button = add('Existing base PKG', self.existing_base, lambda: self.choose_file(
             self.existing_base, 'Choose an existing base package', 'PS4 package (*.pkg)'))
         self.existing_gp4 = QLineEdit()
-        self.existing_gp4.setPlaceholderText('Optional · used for the matching selected dump')
-        self.gp4_button = add('Existing GP4', self.existing_gp4, lambda: self.choose_file(
+        self.existing_gp4.setPlaceholderText('Optional · override the project for one selected dump')
+        self.gp4_button = add('GP4 override', self.existing_gp4, lambda: self.choose_file(
             self.existing_gp4, 'Choose a build GP4', 'PS4 build project (*.gp4)'))
         options = QHBoxLayout()
         self.keystone = QCheckBox('Preserve sce_sys/keystone')
@@ -106,10 +107,11 @@ class FpkgPanel(QWidget):
         layout.addLayout(options)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['Game / package', 'Version', 'Archived saves / dump path'])
+        self.tree.setHeaderLabels(['Game / package', 'Version', 'GP4', 'Archived saves / dump path'])
         self.tree.setAlternatingRowColors(True)
         self.tree.setColumnWidth(0, 410)
         self.tree.setColumnWidth(1, 95)
+        self.tree.setColumnWidth(2, 175)
         self.tree.setMinimumHeight(155)
         layout.addWidget(self.tree, 2)
         self.status = QLabel('Choose a dumps folder and scan it.')
@@ -180,6 +182,7 @@ class FpkgPanel(QWidget):
 
     def invalidate_scan(self):
         self.scan_path = None
+        self.nearby_gp4s = {}
         self.tree.clear()
         self.dump_items.clear()
         self.update_buttons()
@@ -199,7 +202,7 @@ class FpkgPanel(QWidget):
 
     def start(self, worker, result_handler):
         self.worker = worker
-        self.cancel_button.setText('Cancel scan' if worker.operation is scan_dumps else 'Cancel build')
+        self.cancel_button.setText('Cancel scan' if worker.operation is scan_build_inputs else 'Cancel build')
         worker.result.connect(result_handler)
         worker.failed.connect(self.show_failure)
         worker.log.connect(self.log.appendPlainText)
@@ -213,10 +216,10 @@ class FpkgPanel(QWidget):
         self.log.clear()
         self.status.setText('Scanning for PS4 dumps…')
         self.bar.setRange(0, 0)
-        self.start(PackageWorker(scan_dumps, self.source.text().strip()), self.show_dumps)
+        self.start(PackageWorker(scan_build_inputs, self.source.text().strip()), self.show_dumps)
 
     def show_dumps(self, result):
-        dumps, errors = result
+        dumps, errors, self.nearby_gp4s, notices = result
         saves = {}
         for row in self.archive.list_saves(platform='PS4'):
             title_id = row['title_id'].upper()
@@ -227,12 +230,14 @@ class FpkgPanel(QWidget):
             if dump.title_id not in groups:
                 count = saves.get(dump.title_id, 0)
                 badge = f'{count} archived save(s)' if count else 'No archived saves'
-                group = QTreeWidgetItem([f'{titles.get(dump.title_id, dump.title)} [{dump.title_id}]', '', badge])
+                group = QTreeWidgetItem([f'{titles.get(dump.title_id, dump.title)} [{dump.title_id}]', '', '', badge])
                 groups[dump.title_id] = group
                 self.tree.addTopLevelItem(group)
+            gp4 = self.nearby_gp4s.get(dump.path)
             child = QTreeWidgetItem([f'{CATEGORIES[dump.category]} · {dump.title}',
-                                     dump.build_version or '—', str(dump.path)])
-            child.setToolTip(2, str(dump.path))
+                                     dump.build_version or '—', gp4.name if gp4 else 'Generate', str(dump.path)])
+            child.setToolTip(2, str(gp4) if gp4 else 'Generate a GP4 when building this dump')
+            child.setToolTip(3, str(dump.path))
             child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             child.setCheckState(0, Qt.CheckState.Unchecked)
             groups[dump.title_id].addChild(child)
@@ -240,8 +245,8 @@ class FpkgPanel(QWidget):
         self.tree.expandAll()
         self.scan_path = self.source.text().strip()
         self.status.setText(f'{len(dumps)} package dump(s) in {len(groups)} game(s) · {len(errors)} skipped')
-        if errors:
-            self.log.appendPlainText('\n'.join(errors))
+        if errors or notices:
+            self.log.appendPlainText('\n'.join([*errors, *notices]))
             self.log_toggle.setChecked(True)
 
     def build(self):
@@ -259,7 +264,7 @@ class FpkgPanel(QWidget):
                                self.output.text().strip(), preserve_keystone=self.keystone.isChecked(),
                                storage_type=self.storage.currentText(),
                                existing_base=self.existing_base.text().strip(),
-                               existing_gp4=self.existing_gp4.text().strip())
+                               existing_gp4=self.existing_gp4.text().strip(), nearby_gp4s=self.nearby_gp4s)
         worker.options.update(log=worker.log.emit, progress=worker.progress.emit)
         self.start(worker, self.show_build)
 

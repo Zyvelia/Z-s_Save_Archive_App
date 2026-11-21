@@ -8,7 +8,10 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from zarchive.ps4_fpkg import build_packages, inspect_dump, run_orbis, scan_dumps, validate_package, write_gp4
+from zarchive.ps4_fpkg import (
+    build_packages, inspect_dump, run_orbis, scan_build_inputs, scan_dumps,
+    validate_package, write_gp4,
+)
 
 
 BASE_ID = 'UP0001-CUSA12345_00-GAMECONTENTID000'
@@ -234,6 +237,74 @@ class FpkgTests(unittest.TestCase):
 
         build_packages([base], self.tool, self.output, existing_gp4=gp4, runner=build)
         self.assertEqual(gp4.read_bytes(), original)
+
+    def test_batch_uses_separate_nearby_gp4_for_base_and_patch(self):
+        base, update = map(inspect_dump, (self.base, self.update))
+        base_gp4 = self.base / 'base.gp4'
+        patch_gp4 = self.update.parent / 'update.GP4'
+        write_gp4(base, base_gp4, storage_type='bd50')
+        write_gp4(update, patch_gp4, storage_type='bd50', base_package=self.root / 'old-base.pkg')
+        write_gp4(base, self.base / 'verification-GP4FV.gp4')
+        # A matching base in the parent cannot override the closer base project.
+        write_gp4(base, self.base.parent / 'other-base.gp4')
+        other_id = 'UP0001-CUSA11111_00-GAMECONTENTID000'
+        other_folder = make_dump(self.dumps / 'Another Game' / 'CUSA11111', 'gd', other_id,
+                                 TITLE_ID='CUSA11111', TITLE='Another Game')
+        (other_folder / 'eboot.bin').write_bytes(b'executable')
+        other = inspect_dump(other_folder)
+        other_gp4 = other_folder / 'another.gp4'
+        write_gp4(other, other_gp4, storage_type='bd50')
+
+        dumps, errors, projects, notices = scan_build_inputs(self.dumps)
+        self.assertEqual(projects, {self.base: base_gp4, self.update: patch_gp4, other_folder: other_gp4})
+        self.assertFalse(errors or notices)
+        self.assertIn(other, dumps)
+        messages = []
+
+        def build(tool, project, output, log, progress, cancelled):
+            gp4 = ET.parse(project)
+            package = gp4.find('volume/package')
+            self.assertEqual(package.get('storage_type'), 'bd50')
+            content_id = package.get('content_id')
+            volume = gp4.findtext('volume/volume_type')
+            if volume == 'pkg_ps4_patch':
+                self.assertTrue(Path(package.get('app_path')).is_file())
+                self.assertNotEqual(package.get('app_path'), str(self.root / 'old-base.pkg'))
+            folder = {'pkg_ps4_app': self.base, 'pkg_ps4_patch': self.update}[volume]
+            make_package(output, other_folder if content_id == other_id else folder, content_id=content_id)
+
+        built = build_packages([other, update, base], self.tool, self.output, nearby_gp4s=projects,
+                               log=messages.append, runner=build)
+        self.assertEqual(len(built), 3)
+        for gp4 in (base_gp4, patch_gp4, other_gp4):
+            self.assertIn(f'Using existing GP4: {gp4}', messages)
+
+    def test_ambiguous_nearby_gp4s_use_generated_projects(self):
+        base, update = map(inspect_dump, (self.base, self.update))
+        for name in ('one.gp4', 'two.gp4'):
+            write_gp4(base, self.base / name)
+        write_gp4(update, self.update.parent / 'shared.gp4', base_package=self.root / 'base.pkg')
+        make_dump(self.update.parent / 'other-patch', 'gp', APP_VER='03.00')
+
+        _, errors, projects, notices = scan_build_inputs(self.dumps)
+        self.assertFalse(errors or projects)
+        self.assertTrue(any('multiple matching GP4' in notice for notice in notices))
+        self.assertTrue(any('shared GP4' in notice for notice in notices))
+
+    def test_invalid_auto_detected_project_falls_back_at_build_time(self):
+        base = inspect_dump(self.base)
+        gp4 = self.base / 'base.gp4'
+        write_gp4(base, gp4, storage_type='bd50')
+        _, _, projects, _ = scan_build_inputs(self.dumps)
+        gp4.unlink()
+        messages = []
+
+        def build(tool, project, output, log, progress, cancelled):
+            self.assertEqual(ET.parse(project).find('volume/package').get('storage_type'), 'digital50')
+            make_package(output, self.base)
+
+        build_packages([base], self.tool, self.output, nearby_gp4s=projects, log=messages.append, runner=build)
+        self.assertTrue(any('Generating a GP4' in message for message in messages))
 
     def test_orbis_streams_progress_and_reports_exit_code(self):
         start = subprocess.Popen
