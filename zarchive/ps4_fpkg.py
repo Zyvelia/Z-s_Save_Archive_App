@@ -7,14 +7,19 @@ import os
 from pathlib import Path
 from queue import Empty, Full, Queue
 import re
+import struct
 import subprocess
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import xml.etree.ElementTree as ET
 
-from .storage import read_param_sfo
+from .storage import parse_param_sfo, read_param_sfo
 
 CATEGORIES = {'gd': 'Base', 'gp': 'Patch', 'ac': 'DLC'}
+VOLUME_CATEGORIES = {'pkg_ps4_app': 'gd', 'pkg_ps4_patch': 'gp',
+                     'pkg_ps4_ac_data': 'ac', 'pkg_ps4_ac_nodata': 'ac'}
+SFO_ENTRY_ID = 0x1000
+MAX_SFO_BYTES = 1024 * 1024
 CONTENT_ID = re.compile(r'[A-Z]{2}[0-9]{4}-(CUSA[0-9]{5})_[0-9]{2}-[A-Z0-9_]{16}')
 VERSION = re.compile(r'[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}')
 PASSCODE = '0' * 32
@@ -67,7 +72,7 @@ def inspect_dump(folder):
     sfo = system / 'param.sfo'
     if any(_linked(path) for path in (folder, system, sfo)):
         raise ValueError('A linked dump or param.sfo is unsupported.')
-    if sfo.stat().st_size > 1024 * 1024:
+    if sfo.stat().st_size > MAX_SFO_BYTES:
         raise ValueError('param.sfo exceeds 1 MiB.')
     fields = read_param_sfo(sfo)
     category = fields.get('CATEGORY', '').lower()
@@ -121,6 +126,124 @@ def validate_tool(executable):
         if stream.read(2) != b'MZ':
             raise ValueError('The selected tool is not a Windows executable.')
     return path
+
+
+def validate_package(path, *, expected_content_id=None, expected_category=None):
+    """Check package bounds and read its identity from the header and embedded SFO."""
+    path = long_path(path)
+    if _linked(path) or not path.is_file():
+        raise ValueError(f'Choose an existing, unlinked PS4 package: {path}')
+    with path.open('rb') as stream:
+        file_size = os.fstat(stream.fileno()).st_size
+        header = stream.read(0x490)
+        if len(header) != 0x490 or header[:4] != b'\x7fCNT':
+            raise ValueError(f'Invalid or truncated PS4 PKG header: {path.name}')
+        entry_count, _, table_offset = struct.unpack_from('>III', header, 0x10)
+        body_offset, body_size = struct.unpack_from('>QQ', header, 0x20)
+        image_offset, image_size = struct.unpack_from('>QQ', header, 0x410)
+        declared_size = struct.unpack_from('>Q', header, 0x430)[0]
+        body_end = body_offset + body_size
+        if (not 0 < entry_count <= 0xFFFF or not len(header) <= body_offset <= table_offset
+                or table_offset + entry_count * 32 > body_end or body_end > file_size
+                or (image_size and (image_offset < body_end or image_offset + image_size > file_size))
+                or (declared_size and not max(body_end, image_offset + image_size) <= declared_size <= file_size)):
+            raise ValueError(f'PS4 PKG table, body, or image extends outside the package: {path.name}')
+        raw_content_id = header[0x40:0x70].split(b'\0', 1)[0]
+        content_id = raw_content_id.decode('ascii', errors='replace')
+        if not CONTENT_ID.fullmatch(content_id):
+            raise ValueError(f'Invalid PS4 PKG content ID: {path.name}')
+        stream.seek(table_offset)
+        sfo_entry = None
+        for _ in range(entry_count):
+            entry_id, offset, size = struct.unpack_from('>I12xII', stream.read(32))
+            if size and (offset < body_offset or offset + size > body_end):
+                raise ValueError(f'PS4 PKG entry extends outside the package body: {path.name}')
+            if entry_id == SFO_ENTRY_ID:
+                if sfo_entry is not None or not 0 < size <= MAX_SFO_BYTES:
+                    raise ValueError(f'Invalid PS4 PKG PARAM.SFO entry: {path.name}')
+                sfo_entry = offset, size
+        if sfo_entry is None:
+            raise ValueError(f'PS4 PKG is missing PARAM.SFO: {path.name}')
+        stream.seek(sfo_entry[0])
+        fields = parse_param_sfo(stream.read(sfo_entry[1]))
+    if fields.get('CONTENT_ID') != content_id or (expected_content_id and content_id != expected_content_id):
+        raise ValueError(f'PS4 PKG content ID does not match: {path.name} ({content_id})')
+    if expected_category and fields.get('CATEGORY', '').lower() != expected_category:
+        raise ValueError(f'Expected a {CATEGORIES[expected_category].lower()} PS4 package: {path.name}')
+    return content_id
+
+
+def preflight_dump(dump, preserve_keystone, log):
+    if inspect_dump(dump.path) != dump:
+        raise ValueError(f'Dump metadata changed. Scan again: {dump.path}')
+    if (dump.path / '.dumping').exists():
+        raise ValueError(f'Dump is still in progress or did not finish: {dump.path}')
+    if dump.category != 'gd':
+        return
+    eboot = dump.path / 'eboot.bin'
+    if _linked(eboot) or not eboot.is_file() or not eboot.stat().st_size:
+        raise ValueError(f'Base dump is missing a usable eboot.bin: {dump.path}')
+    keystone = dump.path / 'sce_sys' / 'keystone'
+    if preserve_keystone and (not keystone.is_file() or not keystone.stat().st_size):
+        log(f'Warning: {dump.title_id} base dump has no usable sce_sys/keystone. Existing saves may not load.')
+
+
+def read_existing_gp4(path):
+    path = long_path(path)
+    if (_linked(path) or not path.is_file() or path.suffix.casefold() != '.gp4'
+            or path.stat().st_size > 32 * 1024 * 1024):
+        raise ValueError('Choose an existing build GP4 project up to 32 MiB.')
+    try:
+        project = ET.parse(path).getroot()
+    except ET.ParseError as exc:
+        raise ValueError(f'Invalid GP4 project: {exc}') from exc
+    package = project.find('volume/package')
+    if project.tag != 'psproject' or project.get('fmt') != 'gp4' or package is None:
+        raise ValueError('Choose a PS4 build GP4 project.')
+    category = VOLUME_CATEGORIES.get(project.findtext('volume/volume_type'))
+    content_id = package.get('content_id', '')
+    if category is None or not CONTENT_ID.fullmatch(content_id):
+        raise ValueError('The GP4 does not identify a supported PS4 package.')
+    return project, content_id, category
+
+
+def write_existing_gp4(project, dump, destination, *, preserve_keystone, base_package, cancelled):
+    files, directories = _payload(dump, preserve_keystone, cancelled)
+    available = {target.casefold(): (target, path) for target, path in files}
+    listing = project.find('files')
+    if listing is None or len(project.findall('files')) != 1 or project.find('rootdir') is None:
+        raise ValueError('Expected one file list and a root directory in the build GP4.')
+    included = set()
+    for entry in list(listing):
+        _check_cancelled(cancelled)
+        target = entry.get('targ_path', '').replace('\\', '/').casefold()
+        if entry.tag != 'file' or target in included:
+            raise ValueError(f'Invalid or duplicate GP4 file entry: {target}')
+        if target == 'sce_sys/keystone' and not preserve_keystone:
+            listing.remove(entry)
+            continue
+        if target not in available:
+            raise ValueError(f'GP4 file is missing from this build dump: {target}. Use auto-generated GP4 for verification dumps.')
+        included.add(target)
+        entry.set('targ_path', available[target][0])
+        entry.set('orig_path', str(long_path(available[target][1])))
+    required = {'sce_sys/param.sfo'}
+    if dump.category == 'gd':
+        required.add('eboot.bin')
+    if not required <= included:
+        raise ValueError(f'GP4 is missing required files: {", ".join(sorted(required - included))}')
+    if preserve_keystone and 'sce_sys/keystone' in available and 'sce_sys/keystone' not in included:
+        target, source = available['sce_sys/keystone']
+        ET.SubElement(listing, 'file', targ_path=target, orig_path=str(long_path(source)))
+    package = project.find('volume/package')
+    package.set('passcode', PASSCODE)
+    if dump.category == 'gp':
+        package.set('app_path', str(long_path(base_package)))
+    else:
+        package.attrib.pop('app_path', None)
+    # Recreate the directory tree from the selected dump, ignoring paths in the imported tree.
+    project.remove(project.find('rootdir'))
+    write_project(project, directories, destination)
 
 
 def _payload(dump, preserve_keystone, cancelled):
@@ -192,6 +315,10 @@ def write_gp4(dump, destination, *, preserve_keystone=True, storage_type='digita
             raise ValueError(f'Duplicate or invalid GP4 target path: {target}')
         paths.add(target.casefold())
         ET.SubElement(listing, 'file', targ_path=target, orig_path=str(long_path(source)))
+    write_project(project, directories, destination)
+
+
+def write_project(project, directories, destination):
     nodes = {(): ET.SubElement(project, 'rootdir')}
     for parts in directories:
         nodes[parts] = ET.SubElement(nodes[parts[:-1]], 'dir', targ_name=parts[-1])
@@ -199,7 +326,7 @@ def write_gp4(dump, destination, *, preserve_keystone=True, storage_type='digita
         ET.ElementTree(project).write(stream, encoding='utf-8', xml_declaration=True)
 
 
-def build_plan(dumps):
+def build_plan(dumps, *, existing_base_id=None):
     groups = {}
     for dump in dumps:
         groups.setdefault(dump.title_id, []).append(dump)
@@ -209,11 +336,13 @@ def build_plan(dumps):
         patches = [dump for dump in items if dump.category == 'gp']
         if len(bases) > 1:
             raise ValueError(f'{title_id}: select only one base game.')
-        if patches and not bases:
-            raise ValueError(f'{title_id}: select its base game before building a patch.')
-        if any(patch.content_id != bases[0].content_id for patch in patches):
-            raise ValueError(f'{title_id}: the selected patch and base game have different CONTENT_ID values.')
-        title = (bases[0] if bases else items[0]).title
+        if patches:
+            base_id = bases[0].content_id if bases else existing_base_id
+            if base_id is None:
+                raise ValueError(f'{title_id}: select its base dump or an existing base package before building a patch.')
+            if any(patch.content_id != base_id for patch in patches):
+                raise ValueError(f'{title_id}: the selected patch and base game have different CONTENT_ID values.')
+        title = (bases[0] if bases else patches[0] if patches else items[0]).title
         order = sorted(items, key=lambda dump: (list(CATEGORIES).index(dump.category),
                                                 tuple(map(int, dump.build_version.split('.'))) if dump.build_version else (),
                                                 dump.content_id))
@@ -301,6 +430,7 @@ def run_orbis(tool, project, package, log, progress, cancelled):
 
 
 def build_packages(dumps, executable, output, *, preserve_keystone=True, storage_type='digital50',
+                   existing_base=None, existing_gp4=None,
                    log=lambda _: None, progress=lambda _: None, cancelled=lambda: False, runner=None):
     if os.name != 'nt' and runner is None:
         raise OSError('Building FPKGs requires Windows.')
@@ -309,16 +439,34 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
     root = long_path(output)
     if not root.is_dir() or _linked(root):
         raise ValueError('Choose an existing output directory.')
-    plan = build_plan(dumps)
+    dumps = list(dumps)
+    base_packages = {}
+    existing_base_id = None
+    if existing_base:
+        existing_base_id = validate_package(existing_base, expected_category='gd')
+        if not any(dump.category == 'gp' and dump.content_id == existing_base_id for dump in dumps):
+            raise ValueError('Select a patch matching the existing base package.')
+        if any(dump.category == 'gd' and dump.content_id == existing_base_id for dump in dumps):
+            raise ValueError('Uncheck the matching base dump to reuse its existing package.')
+        base_packages[CONTENT_ID.fullmatch(existing_base_id)[1]] = long_path(existing_base)
+    plan = build_plan(dumps, existing_base_id=existing_base_id)
     if not plan:
         raise ValueError('Select at least one dump to build.')
-    base_packages = {}
+    imported_dump = None
+    if existing_gp4:
+        project, content_id, category = read_existing_gp4(existing_gp4)
+        matches = [dump for dump in dumps if (dump.content_id, dump.category) == (content_id, category)]
+        if len(matches) != 1:
+            raise ValueError('Select exactly one dump matching the existing GP4 content ID and package type.')
+        imported_dump = matches[0]
     for dump, relative in plan:
         _check_cancelled(cancelled)
         final = root / relative
-        if (root == dump.path or dump.path in root.parents or final.exists() or _linked(final)
-                or _linked(final.parent)):
-            raise ValueError(f'Output is inside a dump, already exists, or is linked: {final}')
+        if any(final == source.path or source.path in final.parents for source in dumps):
+            raise ValueError(f'Output is inside a selected dump: {final}')
+        if final.exists() or _linked(final) or _linked(final.parent):
+            raise ValueError(f'Output already exists or is linked: {final}')
+        preflight_dump(dump, preserve_keystone, log)
     invoke = runner or run_orbis
     created = []
     for index, (dump, relative) in enumerate(plan, 1):
@@ -328,17 +476,18 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
         log(f'[{index}/{len(plan)}] Building {relative.name}')
         progress(0)
         with TemporaryDirectory(prefix='.fpkg-', dir=final.parent) as scratch:
-            project = long_path(Path(scratch) / 'project.gp4')
+            project_path = long_path(Path(scratch) / 'project.gp4')
             package = long_path(Path(scratch) / 'package.pkg')
-            write_gp4(dump, project, preserve_keystone=preserve_keystone, storage_type=storage_type,
-                      base_package=base_packages.get(dump.title_id), cancelled=cancelled)
-            invoke(tool, project, package, log, progress, cancelled)
+            project_options = dict(preserve_keystone=preserve_keystone, cancelled=cancelled,
+                                   base_package=base_packages.get(dump.title_id))
+            if dump == imported_dump:
+                log(f'Using existing GP4: {existing_gp4}')
+                write_existing_gp4(project, dump, project_path, **project_options)
+            else:
+                write_gp4(dump, project_path, storage_type=storage_type, **project_options)
+            invoke(tool, project_path, package, log, progress, cancelled)
             _check_cancelled(cancelled)
-            if not package.is_file() or _linked(package) or package.stat().st_size < 64:
-                raise RuntimeError(f'The tool did not produce a complete package for {relative.name}.')
-            with package.open('rb') as stream:
-                if stream.read(4) != b'\x7fCNT':
-                    raise RuntimeError(f'The tool output has an invalid PS4 PKG signature: {relative.name}')
+            validate_package(package, expected_content_id=dump.content_id, expected_category=dump.category)
             # Windows rename fails if a concurrent build has already published this name.
             if os.name == 'nt':
                 package.rename(final)

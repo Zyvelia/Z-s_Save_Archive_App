@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from zarchive.ps4_fpkg import build_packages, inspect_dump, run_orbis, scan_dumps, write_gp4
+from zarchive.ps4_fpkg import build_packages, inspect_dump, run_orbis, scan_dumps, validate_package, write_gp4
 
 
 BASE_ID = 'UP0001-CUSA12345_00-GAMECONTENTID000'
@@ -35,6 +35,20 @@ def make_dump(folder, category, content=BASE_ID, **changes):
     return folder
 
 
+def make_package(package, dump, *, content_id=BASE_ID):
+    sfo = (dump / 'sce_sys' / 'param.sfo').read_bytes()
+    header_size = 0x2000
+    sfo_offset = header_size + 32
+    data = bytearray(sfo_offset + len(sfo))
+    data[:4] = b'\x7fCNT'
+    struct.pack_into('>I', data, 0x10, 1)
+    struct.pack_into('>I4xQQ', data, 0x18, header_size, header_size, 32 + len(sfo))
+    data[0x40:0x40 + len(content_id)] = content_id.encode()
+    struct.pack_into('>I12xII', data, header_size, 0x1000, sfo_offset, len(sfo))
+    data[sfo_offset:] = sfo
+    package.write_bytes(data)
+
+
 class FpkgTests(unittest.TestCase):
     def setUp(self):
         temporary = TemporaryDirectory()
@@ -42,6 +56,7 @@ class FpkgTests(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.dumps = self.root / 'dumps'
         self.base = make_dump(self.dumps / 'nested' / 'CUSA12345-app', 'gd')
+        (self.base / 'eboot.bin').write_bytes(b'executable')
         self.update = make_dump(self.dumps / 'nested' / 'CUSA12345-patch', 'gp', APP_VER='02.00')
         self.dlc = make_dump(self.dumps / 'nested' / 'CUSA12345-ac', 'ac', DLC_ID, TITLE_ID='', TITLE='Extra')
         self.output = self.root / 'output'
@@ -92,7 +107,12 @@ class FpkgTests(unittest.TestCase):
                 base = Path(root.find('volume/package').get('app_path'))
                 self.assertTrue(base.is_file())
                 self.assertIn('[Base v01.02]', base.name)
-            output.write_bytes(b'\x7fCNT' + b'x' * 100)
+            source, content_id = {
+                'pkg_ps4_app': (self.base, BASE_ID),
+                'pkg_ps4_patch': (self.update, BASE_ID),
+                'pkg_ps4_ac_nodata': (self.dlc, DLC_ID),
+            }[volume_type]
+            make_package(output, source, content_id=content_id)
 
         dumps, _ = scan_dumps(self.dumps)
         files = build_packages(dumps[::-1], self.tool, self.output, runner=builder)
@@ -114,6 +134,92 @@ class FpkgTests(unittest.TestCase):
                            runner=builder, cancelled=cancelled.is_set)
         self.assertFalse(list(self.output.rglob('*.pkg')))
         self.assertFalse(list(self.output.rglob('*.gp4')))
+
+    def test_retry_patch_uses_existing_base_after_failure(self):
+        base, update = map(inspect_dump, (self.base, self.update))
+
+        def build_base_then_fail(tool, project, output, log, progress, cancelled):
+            if ET.parse(project).findtext('volume/volume_type') == 'pkg_ps4_patch':
+                raise RuntimeError('patch failed')
+            make_package(output, self.base)
+
+        with self.assertRaisesRegex(RuntimeError, 'patch failed'):
+            build_packages([base, update], self.tool, self.output, runner=build_base_then_fail)
+        existing_base, = self.output.rglob('*.pkg')
+
+        def build_patch(tool, project, output, log, progress, cancelled):
+            package = ET.parse(project).find('volume/package')
+            self.assertEqual(Path(package.get('app_path')), existing_base)
+            make_package(output, self.update)
+
+        patch, = build_packages([update], self.tool, self.output, existing_base=existing_base, runner=build_patch)
+        self.assertEqual(validate_package(patch, expected_category='gp'), BASE_ID)
+        with self.assertRaisesRegex(ValueError, 'Expected a base'):
+            build_packages([update], self.tool, self.output, existing_base=patch, runner=build_patch)
+
+        other = make_dump(self.dumps / 'other', 'gd', 'UP0002-CUSA12345_00-GAMECONTENTID000')
+        different_base = self.root / 'other.pkg'
+        make_package(different_base, other, content_id='UP0002-CUSA12345_00-GAMECONTENTID000')
+        with self.assertRaisesRegex(ValueError, 'Select a patch matching'):
+            build_packages([update], self.tool, self.output, existing_base=different_base, runner=build_patch)
+
+    def test_preflight_rejects_missing_eboot_and_warns_about_keystone(self):
+        base = inspect_dump(self.base)
+        (self.base / 'eboot.bin').unlink()
+
+        def no_build(*args):
+            self.fail('The external builder was invoked before preflight passed')
+
+        with self.assertRaisesRegex(ValueError, 'eboot.bin'):
+            build_packages([base], self.tool, self.output, runner=no_build)
+
+        (self.base / 'eboot.bin').write_bytes(b'executable')
+        messages = []
+
+        def build(tool, project, output, log, progress, cancelled):
+            self.assertTrue(any('Existing saves may not load' in message for message in messages))
+            make_package(output, self.base)
+
+        build_packages([base], self.tool, self.output, log=messages.append, runner=build)
+
+    def test_rejects_truncated_and_wrong_identity_output(self):
+        base = inspect_dump(self.base)
+
+        def stub(tool, project, output, log, progress, cancelled):
+            output.write_bytes(b'\x7fCNT' + bytes(60))
+
+        with self.assertRaisesRegex(ValueError, 'truncated'):
+            build_packages([base], self.tool, self.output, runner=stub)
+        self.assertFalse(list(self.output.rglob('*.pkg')))
+
+        def wrong_id(tool, project, output, log, progress, cancelled):
+            make_package(output, self.base, content_id=DLC_ID)
+
+        with self.assertRaisesRegex(ValueError, 'content ID does not match'):
+            build_packages([base], self.tool, self.output, runner=wrong_id)
+        self.assertFalse(list(self.output.rglob('*.pkg')))
+
+    def test_existing_gp4_keeps_project_options_and_rebases_source_paths(self):
+        base = inspect_dump(self.base)
+        gp4 = self.root / 'existing.gp4'
+        write_gp4(base, gp4, storage_type='bd50')
+        imported = ET.parse(gp4)
+        for entry in imported.findall('files/file'):
+            entry.set('orig_path', 'X:/original-computer/' + entry.get('targ_path'))
+        imported.write(gp4, encoding='utf-8', xml_declaration=True)
+        original = gp4.read_bytes()
+        (self.base / 'sce_sys' / 'keystone').write_bytes(b'keystone')
+
+        def build(tool, project, output, log, progress, cancelled):
+            built = ET.parse(project)
+            self.assertEqual(built.find('volume/package').get('storage_type'), 'bd50')
+            files = {entry.get('targ_path'): Path(entry.get('orig_path')) for entry in built.findall('files/file')}
+            self.assertEqual(files['eboot.bin'], self.base / 'eboot.bin')
+            self.assertEqual(files['sce_sys/keystone'], self.base / 'sce_sys' / 'keystone')
+            make_package(output, self.base)
+
+        build_packages([base], self.tool, self.output, existing_gp4=gp4, runner=build)
+        self.assertEqual(gp4.read_bytes(), original)
 
     def test_orbis_streams_progress_and_reports_exit_code(self):
         start = subprocess.Popen

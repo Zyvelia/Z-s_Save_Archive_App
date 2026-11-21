@@ -73,9 +73,16 @@ On Windows, open Dump to FPKG Builder and select your local
 orbis-pub-cmd.exe, the folder containing decrypted PS4 dumps, and an
 output folder. Scan to see the available base games, patches, and add-ons
 grouped by CUSA title ID and their matching archived save counts. Select
-the packages to build. For patches, also select the matching base dump.
-The builder preserves keystone by default, streams the tool log, and
-places completed packages together in a folder named for the game.
+the packages to build. For patches, select the matching base dump, or leave
+it unchecked and choose a previously built package in Existing base PKG.
+
+The app generates GP4 projects by default. To use an existing build project,
+select it in Existing GP4 and check its matching dump. The app resolves source
+files from that dump and leaves the original project in place.
+
+Before building, the app checks for a usable base-game eboot.bin and warns
+if a requested keystone is missing. It checks the structure and identity of
+each output package before saving it. Completed packages are grouped by game.
 
 PS3 tools
 ---------

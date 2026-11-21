@@ -26,7 +26,10 @@ def now() -> str:
 
 def read_param_sfo(path: Path) -> dict[str, str]:
     """Read string/integer values from standard PSF/SFO; reject corrupt offsets."""
-    data = Path(path).read_bytes()
+    return parse_param_sfo(Path(path).read_bytes())
+
+
+def parse_param_sfo(data: bytes) -> dict[str, str]:
     if len(data) < 20 or data[:4] != b'\x00PSF':
         raise ValueError('Not a valid PARAM.SFO (PSF signature missing)')
     _, version, key_offset, value_offset, count = struct.unpack_from('<4sIIII', data, 0)
