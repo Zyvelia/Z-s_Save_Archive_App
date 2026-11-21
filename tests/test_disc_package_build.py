@@ -10,7 +10,7 @@ from zipfile import ZipFile
 from test_v20 import write_sfo
 from zarchive.iso_converter_v20 import extract_iso, stage_conversion
 from zarchive.app_assets import asset_path
-from zarchive.retail2pkg_v31 import build_pkgs_locally, stream_batch_log
+from zarchive.retail2pkg_v31 import build_pkgs_locally, run_windows_batch, stream_batch_log
 
 
 class DiscPackageBuildTests(unittest.TestCase):
@@ -93,6 +93,19 @@ class DiscPackageBuildTests(unittest.TestCase):
             self.assertEqual(len(result['packages']), 2)
             self.assertEqual(Path(result['folder']).name, 'BLUS30982')
             self.assertTrue(all(Path(pkg).is_file() for pkg in result['packages']))
+
+    def test_windows_batch_requests_a_hidden_console(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            startup = SimpleNamespace(dwFlags=0, wShowWindow=None)
+            with patch.multiple(subprocess, create=True, STARTUPINFO=lambda: startup,
+                                STARTF_USESHOWWINDOW=1, SW_HIDE=0, CREATE_NEW_CONSOLE=16), \
+                 patch('zarchive.retail2pkg_v31.subprocess.Popen') as launch, \
+                 patch('zarchive.retail2pkg_v31.stream_batch_log'):
+                run_windows_batch(Path(scratch), 10, None, None)
+            options = launch.call_args.kwargs
+            self.assertEqual(options['startupinfo'].dwFlags, 1)
+            self.assertEqual(options['startupinfo'].wShowWindow, 0)
+            self.assertEqual(options['creationflags'], 16)
 
     def test_batch_streams_carriage_and_backspace_progress(self):
         with tempfile.TemporaryDirectory() as scratch:

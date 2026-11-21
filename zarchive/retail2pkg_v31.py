@@ -117,7 +117,8 @@ def run_windows_batch(stage, timeout, progress, console_status):
     command = [str(system_root / 'System32' / 'cmd.exe'), '/d', '/v:off', '/s', '/c', launch_line]
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE, available for interactive key prompts.
+    # Keep a console for the legacy helper API while hiding its window.
+    startup.wShowWindow = subprocess.SW_HIDE
     with subprocess.Popen(command, cwd=stage, startupinfo=startup,
                           creationflags=subprocess.CREATE_NEW_CONSOLE) as process:
         try:
@@ -180,7 +181,7 @@ def build_pkgs_locally(iso_path, output_folder, *, progress=None, extraction_pro
         info = inspect_game(game)
         if progress:
             progress(f"Found {info['title']} [{info['title_id']}]. Starting Retail2Pkg.bat.")
-            progress('If PS3Merge opens, select the working folder printed above. If a key is requested, open Retail2Pkg from the taskbar.')
+            progress('If PS3Merge opens, select the working folder printed above.')
         invoke = runner or run_windows_batch
         result = invoke(stage, timeout, progress, console_status)
         if result.returncode:
