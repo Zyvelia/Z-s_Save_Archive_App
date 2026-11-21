@@ -16,15 +16,14 @@ from zipfile import is_zipfile
 
 SOURCE_FILES = {
     '.gitignore', 'main.py', 'update_archive.py', 'requirements.txt',
-    'ZSaveArchive.iss', 'BUILDING.md', 'FEATURE_IDEAS.md', 'README.md',
-    'ROADMAP.md', 'UI_Preview.html', 'INNO_DETECTION_FIX.md', 'Build_All.bat',
+    'ZSaveArchive.iss', 'README.txt', 'UI_Preview.html', 'Build_All.bat',
     'Build_Installer.bat', 'Build_Windows.bat', 'Find_Inno_Setup.bat',
     'Start_Archive.bat', 'Update_Archive.bat',
 }
 SOURCE_TREES = {
     'zarchive': {'.py'}, 'tests': {'.py'}, 'assets': {'.png', '.ico', '.bat'},
-    'editor_definitions': {'.json'}, 'ps3-stats': {'.c', '.h', '.png', '.xml', '.md'},
-    'ps3-controller-tester': {'.c', '.h', '.png', '.xml', '.md'},
+    'editor_definitions': {'.json'}, 'ps3-stats': {'.c', '.h', '.png', '.xml'},
+    'ps3-controller-tester': {'.c', '.h', '.png', '.xml'},
 }
 DOWNLOAD_NAME = re.compile(r'(?:SHA256SUMS\.txt|Controller_Tester\.pkg|PS3_Stats\.pkg|'
                            r'Z_Save_Archive_v\d+\.\d+\.\d+_Source\.zip)')
@@ -67,7 +66,7 @@ def _source_files(root: Path):
         for name in files:
             path = parent / name
             if parent == root:
-                allowed = name in SOURCE_FILES or re.fullmatch(r'RELEASE_NOTES_[A-Za-z0-9._-]+\.md', name)
+                allowed = name in SOURCE_FILES
             elif relative.parts[0] == 'downloads':
                 allowed = DOWNLOAD_NAME.fullmatch(name)
             else:
