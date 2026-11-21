@@ -80,7 +80,7 @@ def export_many(archive,ids,target:Path):
     target.mkdir(parents=True,exist_ok=True)
     results=[]
     for sid in dict.fromkeys(ids):
-        row=archive.conn.execute('SELECT * FROM saves WHERE id=?',(sid,)).fetchone()
+        row=archive.conn.execute('SELECT * FROM active_saves WHERE id=?',(sid,)).fetchone()
         if row is None:
             results.append({'id':sid,'status':'skipped','reason':'Save not found'});continue
         filename=f"{safe_slug(row['game'])}_{safe_slug(row['platform'])}_{str(sid)[:10]}.zip"

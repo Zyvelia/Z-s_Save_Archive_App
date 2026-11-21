@@ -89,8 +89,8 @@ class ArchiveV16(ArchiveV15):
         term='%'+str(query).strip()[:200].replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
         where="(game LIKE ? ESCAPE '\\' OR title_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\') AND (?='All' OR platform=?) AND (?='All' OR category=?)"
         args=(term,)*5+(platform,platform,category,category)
-        count=self.conn.execute('SELECT COUNT(*) FROM saves WHERE '+where,args).fetchone()[0]
-        rows=[dict(r) for r in self.conn.execute('SELECT * FROM saves WHERE '+where+' ORDER BY imported_at DESC,game COLLATE NOCASE LIMIT ? OFFSET ?',args+(limit,offset))]
+        count=self.conn.execute('SELECT COUNT(*) FROM active_saves WHERE '+where,args).fetchone()[0]
+        rows=[dict(r) for r in self.conn.execute('SELECT * FROM active_saves WHERE '+where+' ORDER BY imported_at DESC,game COLLATE NOCASE LIMIT ? OFFSET ?',args+(limit,offset))]
         for r in rows:
             try:r['tags']=json.loads(r.get('tags_json') or '[]')
             except (ValueError,TypeError):r['tags']=[]

@@ -22,12 +22,12 @@ class ArchiveV11(ArchiveV10):
         self.conn.commit()
 
     def _save(self, sid):
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(sid,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(sid,)).fetchone()
         if row is None: raise ValueError('Save not found')
         return row
 
     def create_variant(self,platform,game,name):
-        if platform not in ('PS3','PC','PS4') or not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
+        if platform not in ('PS3','PC','PS4') or not self.conn.execute('SELECT 1 FROM active_saves WHERE platform=? AND game=?',(platform,game)).fetchone():
             raise ValueError('Game not found')
         name=' '.join(str(name).split())
         if not 1<=len(name)<=90:raise ValueError('Invalid variant name')
@@ -47,7 +47,7 @@ class ArchiveV11(ArchiveV10):
         self.conn.execute('INSERT INTO save_variant_links VALUES (?,?) ON CONFLICT(save_id) DO UPDATE SET variant_id=excluded.variant_id',(save_id,variant_id));self.conn.commit()
     def set_game_progress(self,platform,game,progress):
         if progress not in ('Untouched','In Progress','Completed'):raise ValueError('Invalid completion state')
-        if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():raise ValueError('Game not found')
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE platform=? AND game=?',(platform,game)).fetchone():raise ValueError('Game not found')
         self.conn.execute('INSERT INTO game_progress VALUES (?,?,?) ON CONFLICT(platform,game) DO UPDATE SET progress=excluded.progress',(platform,game,progress));self.conn.commit()
     def game_progress_list(self):return [dict(r) for r in self.conn.execute('SELECT * FROM game_progress ORDER BY game')]
 
@@ -64,7 +64,7 @@ class ArchiveV11(ArchiveV10):
             for sid in ids:
                 old=dict(self._save(sid))
                 changes.append({'id':sid,'category':old['category'],'visibility':old['visibility'],'tags_json':old['tags_json']})
-                self.conn.execute('UPDATE saves SET category=?,visibility=?,tags_json=? WHERE id=?',(
+                self.conn.execute('UPDATE saves SET category=?,visibility=?,tags_json=? WHERE id=? AND removed_at IS NULL',(
                     category if category is not None else old['category'],
                     visibility if visibility is not None else old['visibility'],
                     json.dumps(list(dict.fromkeys(t.strip() for t in tags)),ensure_ascii=False) if tags is not None else old['tags_json'],sid))
@@ -76,7 +76,7 @@ class ArchiveV11(ArchiveV10):
             row=self.conn.execute('SELECT * FROM metadata_operations WHERE id=?',(operation_id,)).fetchone()
             if not row or row['undone']:raise ValueError('Operation missing or already undone')
             for item in json.loads(row['changes_json']):
-                self.conn.execute('UPDATE saves SET category=?,visibility=?,tags_json=? WHERE id=?',
+                self.conn.execute('UPDATE saves SET category=?,visibility=?,tags_json=? WHERE id=? AND removed_at IS NULL',
                                   (item['category'],item['visibility'],item['tags_json'],item['id']))
             self.conn.execute('UPDATE metadata_operations SET undone=1 WHERE id=?',(operation_id,))
     def recent_metadata_operations(self):

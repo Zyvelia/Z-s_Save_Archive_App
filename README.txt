@@ -54,9 +54,14 @@ Removing archived saves
 
 Open Saves & Backups > Browse Saves, select one save or use Ctrl/Shift to select
 several, then choose Remove from Archive in the inspector or right-click menu.
-Confirm to delete the archived copies and their entries. Original saves and
-existing backup ZIP files are preserved. Versioned ZIPs for removed entries
-remain in the archive's backups folder.
+Removed saves disappear from the library and keep their files, metadata,
+screenshots and versioned backups. In Saves & Backups > Recently Removed,
+select entries and choose Restore selected to put them back. Entries stay
+there until restored or permanently deleted. Permanent deletion removes the
+archived copies and entries. Original saves and existing backup ZIPs stay on
+disk. Versioned ZIPs for permanently deleted entries remain in the archive's
+backups folder. Saves permanently deleted by an older version cannot be
+restored through Recently Removed.
 
 PS4 saves
 ---------

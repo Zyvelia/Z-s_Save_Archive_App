@@ -132,6 +132,9 @@ class Archive:
         for col in ('origin_kind','origin_name','origin_url','origin_notes'):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE saves ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        if 'removed_at' not in cols:
+            self.conn.execute('ALTER TABLE saves ADD COLUMN removed_at TEXT')
+        self.conn.execute('CREATE TEMP VIEW IF NOT EXISTS active_saves AS SELECT * FROM saves WHERE removed_at IS NULL')
         self.conn.commit()
         self._recover_interrupted_removals()
 
@@ -169,7 +172,7 @@ class Archive:
     def _delete_save_record(self, record_id):
         self.conn.execute('DELETE FROM saves WHERE id=?', (record_id,))
 
-    def remove_saves(self, record_ids):
+    def remove_saves(self, record_ids, *, only_removed=False):
         """Remove indexed saves and their managed copies, returning any files left to clean up."""
         if not self._managed_directory_exists(self.data_dir):
             raise ValueError('Archive objects directory is missing.')
@@ -180,8 +183,8 @@ class Archive:
             for record_id in dict.fromkeys(record_ids):
                 if not SAVE_ID.fullmatch(record_id):
                     raise ValueError('Invalid save ID.')
-                row = self.conn.execute('SELECT stored_path FROM saves WHERE id=?', (record_id,)).fetchone()
-                if row is None:
+                row = self.conn.execute('SELECT stored_path, removed_at FROM saves WHERE id=?', (record_id,)).fetchone()
+                if row is None or (only_removed and row['removed_at'] is None):
                     continue
                 original = self.data_dir / record_id
                 if Path(row['stored_path']) != original.relative_to(self.root):
@@ -215,6 +218,45 @@ class Archive:
                 remaining.append(pending)
         return removed, remaining
 
+    def trash_saves(self, record_ids):
+        """Hide saves while keeping the archived files and linked records available for undo."""
+        removed_at = now()
+        with self.conn:
+            updated = self.conn.executemany(
+                'UPDATE saves SET removed_at=? WHERE id=? AND removed_at IS NULL',
+                ((removed_at, record_id) for record_id in dict.fromkeys(record_ids)),
+            )
+        return updated.rowcount
+
+    def list_removed_saves(self):
+        return [dict(row) for row in self.conn.execute(
+            """SELECT id, game, platform, label, size_bytes, removed_at FROM saves
+               WHERE removed_at IS NOT NULL ORDER BY removed_at DESC, game COLLATE NOCASE, id""")]
+
+    def restore_removed_saves(self, record_ids):
+        restored = 0
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            for record_id in dict.fromkeys(record_ids):
+                row = self.conn.execute(
+                    'SELECT * FROM saves WHERE id=? AND removed_at IS NOT NULL', (record_id,)
+                ).fetchone()
+                if row is None:
+                    continue
+                stored = self.data_dir / record_id
+                if (not SAVE_ID.fullmatch(record_id) or Path(row['stored_path']) != stored.relative_to(self.root)
+                        or not self._managed_directory_exists(stored)):
+                    raise ValueError(f"Archived files are unavailable for {row['game']} — {row['label']}.")
+                duplicate = self.conn.execute(
+                    'SELECT 1 FROM active_saves WHERE platform=? AND file_hash=?',
+                    (row['platform'], row['file_hash']),
+                ).fetchone()
+                if duplicate:
+                    raise ValueError(f"An identical active save already exists for {row['game']} — {row['label']}.")
+                self.conn.execute('UPDATE saves SET removed_at=NULL WHERE id=?', (record_id,))
+                restored += 1
+        return restored
+
     def set_origin(self, record_id: str, *, kind: str, name: str = '', url: str = '', notes: str = '') -> None:
         """Record human-entered provenance; never claim authenticity from this field."""
         from urllib.parse import urlsplit
@@ -229,7 +271,7 @@ class Archive:
             if parts.scheme not in ('https','http') or not parts.hostname or parts.username or parts.password:
                 raise ValueError('Enter an HTTP(S) source link without credentials')
         with self.conn:
-            cur = self.conn.execute('UPDATE saves SET origin_kind=?, origin_name=?, origin_url=?, origin_notes=? WHERE id=?', (kind, name, url, notes, record_id))
+            cur = self.conn.execute('UPDATE saves SET origin_kind=?, origin_name=?, origin_url=?, origin_notes=? WHERE id=? AND removed_at IS NULL', (kind, name, url, notes, record_id))
             if cur.rowcount != 1: raise ValueError('Save not found')
 
     def import_save(self, folder: Path, category: str = 'Unsorted', label: str = '', notes: str = '') -> dict:
@@ -250,7 +292,7 @@ class Archive:
                   'Europe' if title_id.startswith(('BLES','BCES','NPEB')) else
                   'Japan' if title_id.startswith(('BLJM','BLJS','NPJB')) else 'Unknown')
         checksum, size, files = folder_digest(folder)
-        if self.conn.execute('SELECT 1 FROM saves WHERE file_hash=?', (checksum,)).fetchone():
+        if self.conn.execute('SELECT 1 FROM active_saves WHERE file_hash=?', (checksum,)).fetchone():
             raise ValueError('Identical save already exists in archive (SHA-256 duplicate)')
         record_id = uuid.uuid4().hex
         dest = self.data_dir / record_id
@@ -315,7 +357,7 @@ class Archive:
             checksum,size,files = folder_digest(copied)
             if source.is_dir() and (checksum,size,files) != folder_digest(source):
                 raise ValueError('Source changed during import')
-            if self.conn.execute('SELECT 1 FROM saves WHERE file_hash=? AND platform=?',(checksum,platform)).fetchone():
+            if self.conn.execute('SELECT 1 FROM active_saves WHERE file_hash=? AND platform=?',(checksum,platform)).fetchone():
                 raise ValueError(f'Identical {platform} save already exists (SHA-256 duplicate)')
             record_id = uuid.uuid4().hex
             dest = self.data_dir/record_id
@@ -348,18 +390,18 @@ class Archive:
                 clean.append(t)
         if len(clean)>24:
             raise ValueError('Maximum 24 tags per save')
-        self.conn.execute('UPDATE saves SET tags_json=? WHERE id=?',(json.dumps(clean,ensure_ascii=False),record_id))
+        self.conn.execute('UPDATE saves SET tags_json=? WHERE id=? AND removed_at IS NULL',(json.dumps(clean,ensure_ascii=False),record_id))
         self.conn.commit()
 
     def list_tags(self):
         tags={t.casefold():t for t in DEFAULT_TAGS}
-        for row in self.conn.execute('SELECT tags_json FROM saves'):
+        for row in self.conn.execute('SELECT tags_json FROM active_saves'):
             for t in json.loads(row['tags_json'] or '[]'):
                 tags.setdefault(t.casefold(),t)
         return sorted(tags.values(),key=str.casefold)
 
     def backup_zip(self,record_id: str,target: Path) -> Path:
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(record_id,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(record_id,)).fetchone()
         if row is None:
             raise ValueError('Save not found')
         folder=(self.root/row['stored_path']).resolve()
@@ -396,7 +438,7 @@ class Archive:
 
     def list_saves(self,query: str='',category: str='All',platform: str='All',tag: str='All') -> list[dict]:
         q=f'%{query.strip()}%'
-        rows=[dict(r) for r in self.conn.execute("""SELECT * FROM saves WHERE
+        rows=[dict(r) for r in self.conn.execute("""SELECT * FROM active_saves WHERE
             (game LIKE ? OR title_id LIKE ? OR label LIKE ? OR notes LIKE ? OR tags_json LIKE ? OR origin_kind LIKE ? OR origin_name LIKE ? OR origin_url LIKE ?)
             AND (?='All' OR category=?) AND (?='All' OR platform=?)
             ORDER BY imported_at DESC,game COLLATE NOCASE""",(q,q,q,q,q,q,q,q,category,category,platform,platform))]
@@ -407,19 +449,19 @@ class Archive:
     def games(self,query: str='',platform: str='All') -> list[dict]:
         q=f'%{query.strip()}%'
         return [dict(r) for r in self.conn.execute("""SELECT game,title_id,region,platform,COUNT(*) AS saves,
-            SUM(size_bytes) AS bytes,MAX(imported_at) AS updated FROM saves
+            SUM(size_bytes) AS bytes,MAX(imported_at) AS updated FROM active_saves
             WHERE (game LIKE ? OR title_id LIKE ?) AND (?='All' OR platform=?)
             GROUP BY game,title_id,region,platform ORDER BY game COLLATE NOCASE""",(q,q,platform,platform))]
 
     def update(self, record_id: str, *, category: str, label: str, notes: str, status: str) -> None:
         if category not in CATEGORIES or status not in ('Unverified','Verified','Needs fixes'):
             raise ValueError('Unsupported category or test status')
-        self.conn.execute('UPDATE saves SET category=?,label=?,notes=?,status=? WHERE id=?',
+        self.conn.execute('UPDATE saves SET category=?,label=?,notes=?,status=? WHERE id=? AND removed_at IS NULL',
                           (category,label.strip()[:150],notes[:5000],status,record_id))
         self.conn.commit()
 
     def stats(self) -> tuple[int,int,int]:
-        row = self.conn.execute('SELECT COUNT(*),COUNT(DISTINCT game || title_id),SUM(status="Verified") FROM saves').fetchone()
+        row = self.conn.execute('SELECT COUNT(*),COUNT(DISTINCT game || title_id),SUM(status="Verified") FROM active_saves').fetchone()
         return row[1],row[0],row[2] or 0
 
     def close(self):

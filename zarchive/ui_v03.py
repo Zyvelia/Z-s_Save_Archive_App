@@ -1,6 +1,8 @@
 """v0.3 GUI additions layered onto the working v0.2 interface."""
 from __future__ import annotations
 import json, os, re, sys
+from datetime import datetime
+from sqlite3 import Error as DatabaseError
 from pathlib import Path
 from PySide6.QtCore import QItemSelectionModel, Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap, QAction
@@ -11,6 +13,83 @@ from . import ui
 from .enhanced import COLORS
 from .storage import DEFAULT_TAGS, ORIGIN_KINDS
 from .integrations import steam_games,download_steam_cover,ftp_list_ps3,ftp_import_ps3
+
+class RecentlyRemovedDialog(QDialog):
+    def __init__(self, archive, parent):
+        super().__init__(parent)
+        self.archive = archive
+        self.changed = False
+        self.setWindowTitle('Recently Removed')
+        self.resize(680, 420)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel('Removed saves stay here until you restore or permanently delete them.'))
+        self.saves = QListWidget()
+        self.saves.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.saves.itemSelectionChanged.connect(self.update_actions)
+        layout.addWidget(self.saves)
+        self.status = QLabel()
+        layout.addWidget(self.status)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        self.restore_button = buttons.addButton('Restore selected', QDialogButtonBox.ButtonRole.ActionRole)
+        self.delete_button = buttons.addButton('Delete permanently…', QDialogButtonBox.ButtonRole.ActionRole)
+        self.restore_button.clicked.connect(self.restore_selected)
+        self.delete_button.clicked.connect(self.delete_selected)
+        layout.addWidget(buttons)
+        self.refresh()
+
+    def refresh(self):
+        rows = self.archive.list_removed_saves()
+        self.saves.clear()
+        for row in rows:
+            removed = datetime.fromisoformat(row['removed_at']).astimezone().strftime('%Y-%m-%d %H:%M')
+            item = QListWidgetItem(f"{row['game']} · {row['label']}\n{row['platform']} · Removed {removed}")
+            item.setData(Qt.ItemDataRole.UserRole, row['id'])
+            self.saves.addItem(item)
+        self.status.setText(f'{len(rows)} removed save(s)' if rows else 'No recently removed saves.')
+        self.update_actions()
+
+    def update_actions(self):
+        enabled = bool(self.saves.selectedItems())
+        self.restore_button.setEnabled(enabled)
+        self.delete_button.setEnabled(enabled)
+
+    def restore_selected(self):
+        selected = [item.data(Qt.ItemDataRole.UserRole) for item in self.saves.selectedItems()]
+        try:
+            restored = self.archive.restore_removed_saves(selected)
+        except (OSError, ValueError, DatabaseError) as error:
+            QMessageBox.warning(self, 'Could not restore saves', str(error))
+            return
+        self.changed |= bool(restored)
+        self.refresh()
+        self.status.setText(f'Restored {restored} save(s).')
+
+    def delete_selected(self):
+        selected = [item.data(Qt.ItemDataRole.UserRole) for item in self.saves.selectedItems()]
+        if not selected:
+            return
+        buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        answer = QMessageBox.question(
+            self, 'Permanently delete saves?',
+            f'Delete {len(selected)} archived save(s) permanently? Existing backup ZIP files are kept.',
+            buttons, QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            removed, remaining = self.archive.remove_saves(selected, only_removed=True)
+        except (OSError, ValueError, DatabaseError) as error:
+            QMessageBox.warning(self, 'Could not delete saves', str(error))
+            return
+        self.changed |= bool(removed)
+        self.refresh()
+        self.status.setText(f'Permanently deleted {removed} save(s).')
+        if remaining:
+            QMessageBox.warning(self, 'Some archived files could not be deleted',
+                                'The entries were removed. These detached archive folders remain:\n'
+                                + '\n'.join(map(str, remaining)))
+
 
 class Window(ui.MainWindow):
     def __init__(self,root):
@@ -60,6 +139,9 @@ class Window(ui.MainWindow):
         self.save_list.itemSelectionChanged.connect(
             lambda: self.remove_save_btn.setEnabled(bool(self.save_list.selectedItems())))
         dl.insertWidget(2, self.remove_save_btn)
+        recent_button = QPushButton('Recently Removed…')
+        recent_button.clicked.connect(self.show_recently_removed)
+        dl.insertWidget(3, recent_button)
         self.bulk_btn=QPushButton('Bulk ZIP Backups');self.bulk_btn.clicked.connect(self.bulk_backup)
         self.bulk_tag_btn=QPushButton('Bulk Tag');self.bulk_tag_btn.clicked.connect(self.bulk_tags)
         toolbar.insertWidget(2,self.bulk_btn);toolbar.insertWidget(3,self.bulk_tag_btn)
@@ -180,13 +262,13 @@ class Window(ui.MainWindow):
         answer = QMessageBox.question(
             self, 'Remove from Archive',
             f'Remove {target}?\n\n'
-            'This deletes the archived copies and their entries. Original saves and existing backup ZIP files are kept.',
+            'You can restore these saves from Recently Removed.',
             buttons, QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            removed, remaining = self.archive.remove_saves([save['id'] for save in saves])
+            removed = self.archive.trash_saves([save['id'] for save in saves])
         except Exception as error:
             QMessageBox.warning(self, 'Could not remove saves', str(error))
             return
@@ -201,13 +283,15 @@ class Window(ui.MainWindow):
             self._update_chips([])
         if hasattr(self, 'update_home'):
             self.update_home()
-        self.statusBar().showMessage(f'Removed {removed} save(s) from the archive.')
-        if remaining:
-            QMessageBox.warning(
-                self, 'Some archived files could not be deleted',
-                'The entries were removed. These detached archive folders still need cleanup:\n'
-                + '\n'.join(map(str, remaining)),
-            )
+        self.statusBar().showMessage(f'Moved {removed} save(s) to Recently Removed.')
+
+    def show_recently_removed(self):
+        dialog = RecentlyRemovedDialog(self.archive, self)
+        dialog.exec()
+        if dialog.changed:
+            self.refresh()
+            if hasattr(self, 'update_home'):
+                self.update_home()
 
     def bulk_backup(self):
         ids=self.selected_ids()

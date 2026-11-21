@@ -145,7 +145,7 @@ class ArchiveV13(ArchiveV12):
     def verify_all_saves(self,limit=2000):
         if type(limit)!=int or not 1<=limit<=20000:raise ValueError('Invalid limit')
         results=[]
-        for r in self.conn.execute('SELECT id,game,stored_path,file_hash,size_bytes,file_count FROM saves ORDER BY imported_at DESC LIMIT ?',(limit,)).fetchall():
+        for r in self.conn.execute('SELECT id,game,stored_path,file_hash,size_bytes,file_count FROM active_saves ORDER BY imported_at DESC LIMIT ?',(limit,)).fetchall():
             path=(self.root/r['stored_path']).resolve()
             try:
                 if not path.is_relative_to(self.data_dir.resolve()):raise ValueError('Path outside archive')
@@ -214,22 +214,22 @@ class ArchiveV13(ArchiveV12):
     def save_timeline(self,game=None,limit=200):
         if type(limit)!=int or not 1<=limit<=1000:raise ValueError('Invalid limit')
         if game is None:
-            rows=self.conn.execute('SELECT id,game,platform,label,category,imported_at FROM saves ORDER BY imported_at DESC LIMIT ?',(limit,)).fetchall()
+            rows=self.conn.execute('SELECT id,game,platform,label,category,imported_at FROM active_saves ORDER BY imported_at DESC LIMIT ?',(limit,)).fetchall()
         else:
-            rows=self.conn.execute('SELECT id,game,platform,label,category,imported_at FROM saves WHERE game=? ORDER BY imported_at DESC LIMIT ?',(game,limit)).fetchall()
+            rows=self.conn.execute('SELECT id,game,platform,label,category,imported_at FROM active_saves WHERE game=? ORDER BY imported_at DESC LIMIT ?',(game,limit)).fetchall()
         return [dict(row) for row in rows]
 
     def duplicate_candidates(self,limit=100):
         """Report identical hashes, not speculative near-duplicates."""
         if type(limit)!=int or not 1<=limit<=1000:raise ValueError('Invalid limit')
-        rows=self.conn.execute('SELECT file_hash,COUNT(*) AS count,GROUP_CONCAT(id) AS save_ids FROM saves GROUP BY file_hash HAVING COUNT(*)>1 ORDER BY count DESC LIMIT ?',(limit,)).fetchall()
+        rows=self.conn.execute('SELECT file_hash,COUNT(*) AS count,GROUP_CONCAT(id) AS save_ids FROM active_saves GROUP BY file_hash HAVING COUNT(*)>1 ORDER BY count DESC LIMIT ?',(limit,)).fetchall()
         return [dict(row) for row in rows]
 
     def universal_search(self,query,limit=100):
         if not isinstance(query,str) or not 1<=len(query.strip())<=160:raise ValueError('Search query required')
         if type(limit)!=int or not 1<=limit<=500:raise ValueError('Invalid limit')
         q='%'+query.strip().replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-        sql="SELECT id,platform,game,title_id,label,category,status,imported_at FROM saves WHERE game LIKE ? ESCAPE '\\' OR title_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\' ORDER BY imported_at DESC LIMIT ?"
+        sql="SELECT id,platform,game,title_id,label,category,status,imported_at FROM active_saves WHERE game LIKE ? ESCAPE '\\' OR title_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\' ORDER BY imported_at DESC LIMIT ?"
         return [dict(r) for r in self.conn.execute(sql,(q,q,q,q,q,limit)).fetchall()]
 
     def archive_health(self):

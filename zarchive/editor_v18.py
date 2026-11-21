@@ -99,7 +99,7 @@ class ArchiveV18(ArchiveV17):
         return [r for r in rows if (game is None or r['game'].casefold()==game.casefold()) and (platform is None or platform in r['platforms'])]
 
     def save_for_edit(self,save_id):
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(save_id,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(save_id,)).fetchone()
         if row is None:raise ValueError('Save not in archive')
         folder=(self.root/row['stored_path']).resolve()
         if not folder.is_relative_to(self.data_dir.resolve()) or not folder.is_dir():raise ValueError('Invalid stored save path')

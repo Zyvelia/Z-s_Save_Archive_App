@@ -72,7 +72,7 @@ class ArchiveV12(ArchiveV11):
         return read_param_sfo(path/'PARAM.SFO')
     def storage_report(self,limit=100):
         if not isinstance(limit,int) or not 1<=limit<=1000:raise ValueError('Invalid limit')
-        rows=self.conn.execute('''SELECT platform, game, COUNT(*) AS saves, SUM(size_bytes) AS bytes FROM saves
+        rows=self.conn.execute('''SELECT platform, game, COUNT(*) AS saves, SUM(size_bytes) AS bytes FROM active_saves
                                 GROUP BY platform,game ORDER BY bytes DESC LIMIT ?''',(limit,)).fetchall()
         backups=self.conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='backups'").fetchone()
         root_size=0; files=0
