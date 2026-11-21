@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, re, sys
 from pathlib import Path
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QItemSelectionModel, Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap, QAction
 from PySide6.QtWidgets import (QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
  QLineEdit,QComboBox,QFileDialog,QInputDialog,QMessageBox,QListWidget,QListWidgetItem,
@@ -54,6 +54,12 @@ class Window(ui.MainWindow):
         self.save_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.save_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.save_list.customContextMenuRequested.connect(self.save_menu)
+        self.remove_save_btn = QPushButton('Remove from Archive…')
+        self.remove_save_btn.setEnabled(False)
+        self.remove_save_btn.clicked.connect(self.remove_selected_saves)
+        self.save_list.itemSelectionChanged.connect(
+            lambda: self.remove_save_btn.setEnabled(bool(self.save_list.selectedItems())))
+        dl.insertWidget(2, self.remove_save_btn)
         self.bulk_btn=QPushButton('Bulk ZIP Backups');self.bulk_btn.clicked.connect(self.bulk_backup)
         self.bulk_tag_btn=QPushButton('Bulk Tag');self.bulk_tag_btn.clicked.connect(self.bulk_tags)
         toolbar.insertWidget(2,self.bulk_btn);toolbar.insertWidget(3,self.bulk_tag_btn)
@@ -161,6 +167,48 @@ class Window(ui.MainWindow):
     def selected_ids(self):
         return [it.data(Qt.ItemDataRole.UserRole)['id'] for it in self.save_list.selectedItems()]
 
+    def remove_selected_saves(self):
+        items = self.save_list.selectedItems()
+        if not items:
+            return
+        saves = [item.data(Qt.ItemDataRole.UserRole) for item in items]
+        if len(saves) == 1:
+            target = f"{saves[0]['game']} — {saves[0]['label']}"
+        else:
+            target = f"{len(saves)} selected saves"
+        buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        answer = QMessageBox.question(
+            self, 'Remove from Archive',
+            f'Remove {target}?\n\n'
+            'This deletes the archived copies and their entries. Original saves and existing backup ZIP files are kept.',
+            buttons, QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            removed, remaining = self.archive.remove_saves([save['id'] for save in saves])
+        except Exception as error:
+            QMessageBox.warning(self, 'Could not remove saves', str(error))
+            return
+        self.refresh()
+        self.detail_meta.setText('Save metadata and testing status will appear here.')
+        self.detail_label.clear()
+        self.detail_notes.clear()
+        self.detail_tags.clear()
+        self.origin_summary.setText('Origin: Unknown')
+        if hasattr(self, 'gallery'):
+            self._populate_gallery(None)
+            self._update_chips([])
+        if hasattr(self, 'update_home'):
+            self.update_home()
+        self.statusBar().showMessage(f'Removed {removed} save(s) from the archive.')
+        if remaining:
+            QMessageBox.warning(
+                self, 'Some archived files could not be deleted',
+                'The entries were removed. These detached archive folders still need cleanup:\n'
+                + '\n'.join(map(str, remaining)),
+            )
+
     def bulk_backup(self):
         ids=self.selected_ids()
         if not ids:
@@ -233,10 +281,18 @@ class Window(ui.MainWindow):
         self.subheading.setText(f"PS3 + PC  ·  {d['saves']} saves  ·  {d['backups']} backup versions  ·  {d['verified']} verified")
 
     def save_menu(self,pos):
+        item = self.save_list.itemAt(pos)
+        if item is None:
+            return
+        if not item.isSelected():
+            self.save_list.setCurrentItem(item, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            self.select_save(item)
         menu=QMenu(self)
         for name,fn in [('Versioned Backup',self.backup_version),('Restore Backup',self.restore_selected),
                         ('Build Release ZIP',self.build_release),('Bulk Tag',self.bulk_tags),('Open Folder',self.open_selected_folder)]:
             a=menu.addAction(name);a.triggered.connect(fn)
+        menu.addSeparator()
+        menu.addAction('Remove from Archive…', self.remove_selected_saves)
         menu.exec(self.save_list.viewport().mapToGlobal(pos))
 
     def choose_theme(self):

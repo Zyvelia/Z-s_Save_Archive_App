@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import struct
 import tempfile
 import uuid
@@ -18,6 +19,7 @@ CATEGORIES = ('Legit', 'Modded', 'Unsorted')
 DEFAULT_TAGS = ('Starter Save','Mid-Game','Endgame','100% Complete','New Game+','All Unlocks','All Characters','All Skills','All Weapons','All Cosmetics','Max Money','Max Level','Max XP','Unlimited Resources','Legendary Gear','Rare Items','Modded Weapons','Perfect Build','Hardcore','No Deaths','Speedrun','Challenge Run','Backup','Tested','Untested','PS4','PS4 USB Backup','PS4 FTP Backup')
 ORIGIN_KINDS = ('Unknown','My own save','Friend / shared privately','Community upload','Website / download','PS3 console backup','PC / local game','Other','PS4 console backup')
 TITLE_ID = re.compile(r'^[A-Z]{4}[0-9]{5}$')
+SAVE_ID = re.compile(r'[a-f0-9]{32}')
 
 
 def now() -> str:
@@ -131,6 +133,87 @@ class Archive:
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE saves ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         self.conn.commit()
+        self._recover_interrupted_removals()
+
+    @staticmethod
+    def _managed_directory_exists(path):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError(f'Expected a real archive directory: {path}')
+        return True
+
+    def _recover_interrupted_removals(self):
+        try:
+            if not self._managed_directory_exists(self.data_dir):
+                return
+        except ValueError:
+            return
+        staged = list(self.data_dir.glob('.removing-*'))
+        if not staged:
+            return
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            for folder in staged:
+                record_id = folder.name.removeprefix('.removing-')
+                if not SAVE_ID.fullmatch(record_id):
+                    continue
+                original = self.data_dir / record_id
+                row = self.conn.execute('SELECT stored_path FROM saves WHERE id=?', (record_id,)).fetchone()
+                if (row and Path(row['stored_path']) == original.relative_to(self.root)
+                        and not self._managed_directory_exists(original) and self._managed_directory_exists(folder)):
+                    folder.rename(original)
+
+    def _delete_save_record(self, record_id):
+        self.conn.execute('DELETE FROM saves WHERE id=?', (record_id,))
+
+    def remove_saves(self, record_ids):
+        """Remove indexed saves and their managed copies, returning any files left to clean up."""
+        if not self._managed_directory_exists(self.data_dir):
+            raise ValueError('Archive objects directory is missing.')
+        removed = 0
+        staged = []
+        self.conn.execute('BEGIN IMMEDIATE')
+        try:
+            for record_id in dict.fromkeys(record_ids):
+                if not SAVE_ID.fullmatch(record_id):
+                    raise ValueError('Invalid save ID.')
+                row = self.conn.execute('SELECT stored_path FROM saves WHERE id=?', (record_id,)).fetchone()
+                if row is None:
+                    continue
+                original = self.data_dir / record_id
+                if Path(row['stored_path']) != original.relative_to(self.root):
+                    raise ValueError(f'Unexpected archived path for save {record_id}.')
+                pending = self.data_dir / ('.removing-' + record_id)
+                if self._managed_directory_exists(pending):
+                    raise ValueError(f'An interrupted removal needs recovery. Reopen the archive. {pending}')
+                if self._managed_directory_exists(original):
+                    original.rename(pending)
+                    staged.append((original, pending))
+                self._delete_save_record(record_id)
+                removed += 1
+            self.conn.commit()
+        except BaseException:
+            try:
+                for original, pending in reversed(staged):
+                    try:
+                        pending.rename(original)
+                    except OSError:
+                        # The record remains indexed; reopening the archive retries the move.
+                        continue
+            finally:
+                self.conn.rollback()
+            raise
+
+        remaining = []
+        for _, pending in staged:
+            try:
+                shutil.rmtree(pending)
+            except OSError:
+                remaining.append(pending)
+        return removed, remaining
 
     def set_origin(self, record_id: str, *, kind: str, name: str = '', url: str = '', notes: str = '') -> None:
         """Record human-entered provenance; never claim authenticity from this field."""
