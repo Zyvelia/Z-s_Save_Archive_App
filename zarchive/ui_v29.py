@@ -1,17 +1,37 @@
 """v2.9 concept dashboard: live archive data, existing features preserved in workspace."""
 from __future__ import annotations
-import os,sys
+import os,re,sys
 from pathlib import Path
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon,QPixmap
+from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QFrame,QLabel,QVBoxLayout,QHBoxLayout,
- QPushButton,QScrollArea,QStackedWidget,QLineEdit,QComboBox,QListWidget,QListWidgetItem,QGridLayout,QMessageBox,QCheckBox,QDialog,QFileDialog)
+ QPushButton,QScrollArea,QStackedWidget,QLineEdit,QComboBox,QListWidget,QListWidgetItem,QGridLayout,QMessageBox,QCheckBox,QDialog,QFileDialog,
+ QDialogButtonBox,QFormLayout,QInputDialog,QMenu)
 from .ui_v28 import Window as ExistingWindow
-from .ui_v04 import STYLE,cover_icon
+from .ui_v04 import STYLE
 from .app_assets import asset_path
 from .appdata_v34 import AppPaths
 from .ui_ps4_fpkg import FpkgPanel
+from .removable_drives import remembered_drive, removable_drives
+from .storage import CHECKPOINT_KINDS
+from .ui_artwork import GameArtwork
+from .ui_preferences import InterfaceTextSize, choose_sort, edit_shortcuts, sorted_by, valid_sort
+from .ui_v16 import CommandPalette
 from .navigation_v30 import classify_action, collect_legacy_actions, DEFAULT_ACTIONS, is_advanced_action
+
+SAVE_SORT_FIELDS = {'Game': 'game', 'Platform': 'platform', 'Save label': 'label',
+                    'Checkpoint': 'checkpoint_label', 'Imported': 'imported_at',
+                    'Size': 'size_bytes', 'Category': 'category', 'Status': 'status'}
+TEXT_SIZES = (90, 100, 110, 125, 140)
+SHORTCUT_DEFAULTS = {
+    'Command palette': 'Ctrl+K', 'Dashboard': 'Ctrl+1', 'Game Library': 'Ctrl+2',
+    'All Saves': 'Ctrl+3', 'Settings': 'Ctrl+4', 'Focus search': 'Ctrl+F',
+    'Search archive': 'Ctrl+Shift+F', 'Import PC save': 'Ctrl+I',
+    'Import PC save (alternate)': 'Ctrl+Shift+I',
+    'Import PS3 save': '', 'Import PS4 save': '', 'Create versioned backup': 'Ctrl+B',
+    'Archive health check': 'Ctrl+Shift+H', 'Pin selected save': 'Ctrl+Shift+P',
+    'Jobs': 'Ctrl+Shift+J', 'Recently Removed': '', 'Dump to FPKG Builder': '',
+}
 
 DESIGN='''
 QFrame#newSidebar {background:#151021;border-right:1px solid #51316d;}
@@ -98,6 +118,7 @@ class Window(ExistingWindow):
         shell=QWidget();self.setCentralWidget(shell)
         row=QHBoxLayout(shell);row.setContentsMargins(0,0,0,0);row.setSpacing(0)
         side=QFrame();side.setObjectName('newSidebar');side.setFixedWidth(224)
+        self.shell_sidebar = side
         sl=QVBoxLayout(side);sl.setContentsMargins(13,18,13,18);sl.setSpacing(5)
         brand=QLabel();brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pix=QPixmap(str(asset_path('ZSaveArchive.png')))
@@ -119,18 +140,35 @@ class Window(ExistingWindow):
                 ('Releases',lambda:self.open_section('Releases')),
                 ('Settings',lambda:self.open_section('Settings'))]
         for index,(text,handler) in enumerate(routes):
-            b=QPushButton(text);b.setObjectName('newNav');b.setCheckable(True)
+            b=QPushButton(text.replace('&', '&&'));b.setObjectName('newNav');b.setCheckable(True)
             b.clicked.connect(lambda _,f=handler:f());sl.addWidget(b);self.navbuttons[text]=b
-        sl.addStretch();sl.addWidget(txt('Local-first · No demo save data',10,True))
+        sl.addStretch()
+        palette = QPushButton('Command Palette')
+        palette.clicked.connect(self.open_palette)
+        sl.addWidget(palette)
         row.addWidget(side)
         self.shell_stack=QStackedWidget();row.addWidget(self.shell_stack,1)
         self.home=QScrollArea();self.home.setWidgetResizable(True);self.home.setObjectName('newHome')
         self.shell_stack.addWidget(self.home);self.shell_stack.addWidget(self.classic_content)
         self.section_pages={}
+        self.artwork = GameArtwork(self.archive, self)
+        self.artwork.ready.connect(self.refresh_artwork)
+        self.save_sort = valid_sort(self.ui_settings.load_settings().get('save_sort'),
+                                    SAVE_SORT_FIELDS, [('Imported', True)])
+        self.install_save_controls()
         for section in ('Saves & Backups','Save Editor','PS3 Tools','Releases','Settings'):
             self.section_pages[section]=self._make_section(section)
             self.shell_stack.addWidget(self.section_pages[section])
         self.make_home()
+        self.setup_shortcuts()
+        self.text_size = InterfaceTextSize(QApplication.instance(), self)
+        percent = self.ui_settings.load_settings().get('text_size', 100)
+        self.set_text_size(percent if percent in TEXT_SIZES else 100)
+        self.usb_timer = QTimer(self)
+        self.usb_timer.setInterval(5000)
+        self.usb_timer.timeout.connect(self.refresh_usb_status)
+        self.usb_timer.start()
+        self.refresh_usb_status()
         self.apply_ps3_visibility()
         self.open_home()
 
@@ -176,16 +214,19 @@ class Window(ExistingWindow):
         info.addWidget(self.ps3_card);info.addWidget(self.ps4_card);info.addWidget(self.pc_card);info.addWidget(self.backup_card);vertical.addLayout(info)
         content=QHBoxLayout();content.setSpacing(12)
         left,left_layout=pane('GAME & SAVE LIBRARY')
-        bar=QHBoxLayout();bar.addWidget(txt('Games in your archive',11,True));bar.addStretch()
+        bar=QHBoxLayout();bar.addStretch()
         browse=QPushButton('Open full library');browse.clicked.connect(lambda:self.open_classic('games'));bar.addWidget(browse)
         organize=QPushButton('Organize');organize.clicked.connect(lambda:self.open_section('Game Library'));bar.addWidget(organize)
         left_layout.addLayout(bar)
         self.home_game_list=QListWidget();self.home_game_list.setObjectName('newList');self.home_game_list.setMinimumHeight(350)
+        self.home_game_list.setIconSize(QSize(150, 76))
+        self.home_game_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.home_game_list.customContextMenuRequested.connect(self.home_artwork_menu)
         self.home_game_list.itemActivated.connect(self.choose_game);self.home_game_list.itemClicked.connect(self.choose_game)
         left_layout.addWidget(self.home_game_list)
-        hint=txt('Select a game to open and inspect its saves.',11,True);left_layout.addWidget(hint)
         content.addWidget(left,3)
-        right=QVBoxLayout();right.setSpacing(12)
+        right_panel = QWidget()
+        right=QVBoxLayout(right_panel);right.setContentsMargins(0,0,0,0);right.setSpacing(12)
         console,console_layout=pane('PS3 CONSOLE')
         console_layout.addWidget(txt('Connection status is not inferred automatically.',11,True))
         cb=QPushButton('Open PS3 connection tools');cb.clicked.connect(lambda:self.open_classic('ftp'));console_layout.addWidget(cb)
@@ -203,7 +244,13 @@ class Window(ExistingWindow):
             b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(handler);grid.addWidget(b,i//3,i%3)
             if 'PS3' in label:self.ps3_widgets.append(b)
         action_layout.addLayout(grid);right.addWidget(actions)
-        content.addLayout(right,2);vertical.addLayout(content)
+        content.addWidget(right_panel,2);vertical.addLayout(content)
+        self.dashboard_cards = {
+            'Overview statistics': hero, 'PS3 saves': self.ps3_card, 'PS4 saves': self.ps4_card,
+            'PC saves': self.pc_card, 'Backup status': self.backup_card, 'Game and save library': left,
+            'PS3 console': console, 'Recent archived saves': recent, 'Quick tools': actions,
+        }
+        self.dashboard_right = right_panel
         vertical.addStretch()
 
     def set_ps3_visibility(self, hidden):
@@ -227,6 +274,7 @@ class Window(ExistingWindow):
             self.navbuttons[name].setVisible(not self.hide_ps3)
         for widget in self.ps3_widgets:
             widget.setVisible(not self.hide_ps3)
+        self.apply_dashboard_cards()
 
     def _set_nav(self,name):
         for key,b in self.navbuttons.items():b.setChecked(key==name)
@@ -248,6 +296,9 @@ class Window(ExistingWindow):
 
     def refresh(self, *args):
         super().refresh(*args)
+        if hasattr(self, 'save_banner') and self.mode == 'saves':
+            self.render_save_rows()
+            self.update_save_header()
         if hasattr(self, 'home_recent_list') and self.shell_stack.currentIndex() == 0:
             self.update_home()
 
@@ -277,9 +328,12 @@ class Window(ExistingWindow):
         }
         outer.addWidget(txt(section,24));outer.addWidget(txt(captions[section],12,True))
         if section=='Saves & Backups':
+            self.usb_status = QLabel()
+            outer.addWidget(self.usb_status)
             row=QHBoxLayout()
             for label,fn in [('Browse Saves',lambda:self.open_classic('saves')),
                              ('Recently Removed',self.show_recently_removed),
+                             ('Remember Save USB',self.choose_save_usb),
                              ('Import PS4 Save',self.import_ps4),('Import PC Save',self.import_pc)]:
                 b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(fn);row.addWidget(b)
             outer.addLayout(row)
@@ -301,6 +355,15 @@ class Window(ExistingWindow):
             hide_ps3.setChecked(self.hide_ps3)
             hide_ps3.toggled.connect(self.set_ps3_visibility)
             outer.addWidget(hide_ps3)
+            for label, callback in (
+                ('Interface Text Size', self.choose_text_size),
+                ('Keyboard Shortcuts', self.configure_shortcuts),
+                ('Dashboard Cards', self.dashboard_preferences),
+                ('Remember Save USB', self.choose_save_usb),
+            ):
+                button = QPushButton(label)
+                button.clicked.connect(callback)
+                outer.addWidget(button)
             b=QPushButton('Open Archive Settings');b.clicked.connect(lambda:self.open_classic('settings'));outer.addWidget(b)
             manager=QPushButton('AppData Storage Manager');manager.setObjectName('newAction');manager.clicked.connect(lambda:AppDataDialog(self).exec());outer.addWidget(manager)
         self._add_action_panel(section,outer)
@@ -346,6 +409,339 @@ class Window(ExistingWindow):
         self.shell_stack.setCurrentWidget(self.section_pages[section])
         self._set_nav(section if section in self.navbuttons else 'Game Library')
 
+    def save_preference(self, key, value):
+        settings = self.ui_settings.load_settings()
+        settings[key] = value
+        try:
+            self.ui_settings.save_settings(settings)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Could not save settings', str(error))
+            return False
+        return True
+
+    def _commands(self):
+        commands = super()._commands()
+        commands.update({
+            'Command palette': self.open_palette, 'Dashboard': self.open_home,
+            'Game Library': lambda: self.open_classic('games'),
+            'All Saves': lambda: self.open_classic('saves'),
+            'Settings': lambda: self.open_section('Settings'),
+            'Saves & Backups': lambda: self.open_section('Saves & Backups'),
+            'Focus search': self.focus_visible_search, 'Import PS4 save': self.import_ps4,
+            'Import PC save (alternate)': self.import_pc,
+            'Create versioned backup': self.backup_version, 'Pin selected save': self.pin_current,
+            'Jobs': self.jobs_ui, 'Recently Removed': self.show_recently_removed,
+            'Dump to FPKG Builder': lambda: self.open_section('Dump to FPKG Builder'),
+            'Keyboard shortcuts': self.configure_shortcuts, 'Interface text size': self.choose_text_size,
+            'Remember save USB': self.choose_save_usb,
+        })
+        hidden = getattr(self, 'hide_ps3', False)
+        for action in getattr(self, 'legacy_actions', ()):
+            text = action.text().replace('&', '').strip()
+            section = classify_action(text)
+            if text and action.isEnabled() and not (hidden and section == 'PS3 Tools'):
+                commands.setdefault(re.sub(r' \(Ctrl\+[^)]+\)$', '', text), action.trigger)
+        if hidden:
+            commands = {name: fn for name, fn in commands.items() if 'ps3' not in name.casefold()}
+        return commands
+
+    def open_palette(self):
+        commands = self._commands()
+        defaults = getattr(self, 'command_shortcuts', {})
+        commands.pop('Command palette', None)
+        commands.pop('Import PC save (alternate)', None)
+        keys = {name: shortcut.key().toString() for name, shortcut in defaults.items()}
+        CommandPalette(commands, self, shortcuts=keys).exec()
+
+    def setup_shortcuts(self):
+        for shortcut in self.findChildren(QShortcut):
+            shortcut.setEnabled(False)
+        self.command_shortcuts = {}
+        keys = self.ui_settings.load_settings().get('keyboard_shortcuts', {})
+        keys = keys if isinstance(keys, dict) else {}
+        for name, default in SHORTCUT_DEFAULTS.items():
+            shortcut = QShortcut(self)
+            configured = keys.get(name, default)
+            shortcut.setKey(QKeySequence.fromString(configured if isinstance(configured, str) else default,
+                                                    QKeySequence.SequenceFormat.PortableText))
+            shortcut.activated.connect(lambda command=name: self.run_command(command))
+            self.command_shortcuts[name] = shortcut
+
+    def run_command(self, name):
+        command = self._commands().get(name)
+        if command is not None:
+            command()
+
+    def focus_visible_search(self):
+        if self.shell_stack.currentWidget() == self.home:
+            self.home_search.setFocus()
+        elif self.shell_stack.currentWidget() == self.classic_content:
+            self.focus_search()
+        else:
+            self.fast_search()
+
+    def configure_shortcuts(self):
+        labels = {name: name for name in SHORTCUT_DEFAULTS}
+        portable = QKeySequence.SequenceFormat.PortableText
+        current = {name: shortcut.key().toString(portable) for name, shortcut in self.command_shortcuts.items()}
+        keys = edit_shortcuts(self, labels, SHORTCUT_DEFAULTS, current)
+        if keys is not None and self.save_preference('keyboard_shortcuts', keys):
+            for name, key in keys.items():
+                self.command_shortcuts[name].setKey(QKeySequence.fromString(key, portable))
+
+    def apply_dashboard_cards(self):
+        cards = self.ui_settings.load_settings().get('home_dashboard_cards', list(self.dashboard_cards))
+        if not isinstance(cards, list):
+            cards = list(self.dashboard_cards)
+        for title, widget in self.dashboard_cards.items():
+            widget.setVisible(title in cards and not (self.hide_ps3 and title.startswith('PS3')))
+        self.dashboard_right.setVisible(any(not self.dashboard_cards[name].isHidden()
+                                            for name in ('PS3 console', 'Recent archived saves', 'Quick tools')))
+
+    def dashboard_preferences(self):
+        if not hasattr(self, 'dashboard_cards'):
+            return super().dashboard_preferences()
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Dashboard Cards')
+        layout = QVBoxLayout(dialog)
+        selected = self.ui_settings.load_settings().get('home_dashboard_cards', list(self.dashboard_cards))
+        if not isinstance(selected, list):
+            selected = list(self.dashboard_cards)
+        options = {}
+        for title in self.dashboard_cards:
+            checkbox = QCheckBox(title)
+            checkbox.setChecked(title in selected)
+            layout.addWidget(checkbox)
+            options[title] = checkbox
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            cards = [title for title, checkbox in options.items() if checkbox.isChecked()]
+            if self.save_preference('home_dashboard_cards', cards):
+                self.apply_dashboard_cards()
+
+    def set_text_size(self, percent):
+        self.text_size.set_percent(percent)
+        self.shell_sidebar.setFixedWidth(max(224, round(224 * percent / 100)))
+
+    def choose_text_size(self):
+        current = TEXT_SIZES.index(self.text_size.percent)
+        value, accepted = QInputDialog.getItem(self, 'Interface Text Size', 'Scale',
+                                               [f'{size}%' for size in TEXT_SIZES], current, False)
+        if accepted:
+            percent = int(value.rstrip('%'))
+            if self.save_preference('text_size', percent):
+                self.set_text_size(percent)
+
+    def _apply_density(self):
+        super()._apply_density()
+        if hasattr(self, 'text_size'):
+            self.text_size.apply_widget(self)
+
+    def choose_theme(self):
+        app = QApplication.instance()
+        previous = app.styleSheet()
+        super().choose_theme()
+        if hasattr(self, 'text_size') and app.styleSheet() != previous:
+            self.text_size.app_style = app.styleSheet() + DESIGN
+            self.set_text_size(self.text_size.percent)
+
+    def refresh_usb_status(self):
+        preference = self.ui_settings.load_settings().get('save_usb', {})
+        if not isinstance(preference, dict) or not preference.get('serial'):
+            self.usb_status.setText('Save USB · No drive remembered')
+            return
+        drive = remembered_drive(preference, removable_drives())
+        location = f'Connected at {drive.root}' if drive else 'Disconnected'
+        self.usb_status.setText(f"Save USB · {preference.get('label') or 'Remembered drive'} · {location}")
+
+    def choose_save_usb(self):
+        drives = removable_drives()
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Remember Save USB')
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel('Save import dialogs open on the remembered drive when it is connected.'))
+        options = QComboBox()
+        for drive in drives:
+            options.addItem(f'{drive.label} ({drive.root})', drive.serial)
+        layout.addWidget(options)
+        remembered = self.ui_settings.load_settings().get('save_usb', {})
+        if isinstance(remembered, dict) and remembered:
+            options.setCurrentIndex(max(0, options.findData(remembered.get('serial'))))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.rejected.connect(dialog.reject)
+        remember = buttons.addButton('Remember selected drive', QDialogButtonBox.ButtonRole.AcceptRole)
+        remember.setEnabled(bool(drives))
+        forget = buttons.addButton('Forget remembered drive', QDialogButtonBox.ButtonRole.DestructiveRole)
+        forget.setEnabled(bool(remembered))
+        remember.clicked.connect(dialog.accept)
+        forget.clicked.connect(lambda: dialog.done(2))
+        if not drives:
+            layout.addWidget(QLabel('No Windows removable drive is connected.'))
+        layout.addWidget(buttons)
+        result = dialog.exec()
+        if result not in (QDialog.DialogCode.Accepted, 2):
+            return
+        drive = drives[options.currentIndex()] if result == QDialog.DialogCode.Accepted else None
+        if self.save_preference('save_usb', {'serial': drive.serial, 'label': drive.label} if drive else {}):
+            self.refresh_usb_status()
+
+    def save_source_directory(self, platform):
+        preference = self.ui_settings.load_settings().get('save_usb', {})
+        drive = remembered_drive(preference, removable_drives()) if isinstance(preference, dict) and preference else None
+        if drive is None:
+            return super().save_source_directory(platform)
+        folder = drive.root / platform / 'SAVEDATA'
+        return str(folder if platform in ('PS3', 'PS4') and folder.is_dir() else drive.root)
+
+    def install_save_controls(self):
+        splitter = self.stack.widget(1)
+        panel = QWidget(splitter)
+        panel.setMinimumWidth(300)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        sort = QPushButton('Sort Saves…')
+        sort.clicked.connect(self.sort_saves)
+        layout.addWidget(sort, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.save_list, 1)
+        splitter.insertWidget(0, panel)
+        self.save_list.show()
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+
+        detail = self.detail_title.parentWidget().layout()
+        self.save_banner = QLabel()
+        self.save_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.save_banner.setFixedHeight(151)
+        self.save_banner.hide()
+        detail.insertWidget(detail.indexOf(self.detail_title) + 1, self.save_banner)
+        self.checkpoint_summary = QLabel()
+        self.checkpoint_summary.setWordWrap(True)
+        detail.insertWidget(detail.indexOf(self.detail_meta) + 1, self.checkpoint_summary)
+        tools = QHBoxLayout()
+        self.checkpoint_button = QPushButton('Set Checkpoint…')
+        self.checkpoint_button.clicked.connect(self.edit_checkpoint)
+        self.art_button = QPushButton('Choose Game Art…')
+        self.art_button.clicked.connect(self.choose_save_art)
+        tools.addWidget(self.checkpoint_button)
+        tools.addWidget(self.art_button)
+        detail.insertLayout(detail.indexOf(self.checkpoint_summary) + 1, tools)
+        self.update_save_header()
+
+    def sort_saves(self):
+        choice = choose_sort(self, SAVE_SORT_FIELDS, self.save_sort)
+        if choice is not None and self.save_preference('save_sort', choice):
+            selected = set(self.selected_ids())
+            current = self.current['id'] if self.current else None
+            self.save_sort = choice
+            self.refresh()
+            for index in range(self.save_list.count()):
+                item = self.save_list.item(index)
+                record_id = item.data(Qt.ItemDataRole.UserRole)['id']
+                item.setSelected(record_id in selected)
+                if record_id == current:
+                    self.select_save(item)
+
+    def render_save_rows(self):
+        rows = []
+        while self.save_list.count():
+            rows.append(self.save_list.takeItem(self.save_list.count()-1))
+        rows.reverse()
+
+        def key(item, field):
+            value = item.data(Qt.ItemDataRole.UserRole).get(SAVE_SORT_FIELDS[field], '')
+            return value.casefold() if isinstance(value, str) else value
+
+        for item in sorted_by(rows, self.save_sort, key):
+            row = item.data(Qt.ItemDataRole.UserRole)
+            if row['checkpoint_label']:
+                item.setText(item.text() + f"\n{row['checkpoint_kind']} · {row['checkpoint_label']}")
+            self.save_list.addItem(item)
+
+    def select_save(self, item):
+        super().select_save(item)
+        if hasattr(self, 'save_banner'):
+            self.update_save_header()
+
+    def update_save_header(self):
+        save = self.current if self.mode == 'saves' else None
+        self.save_banner.setVisible(bool(save))
+        self.checkpoint_button.setEnabled(bool(save))
+        self.art_button.setEnabled(bool(save))
+        if save:
+            size = QSize(324, 151)
+            self.save_banner.setPixmap(self.artwork.icon(save['game'], save['platform'], size).pixmap(size))
+            self.save_banner.setAccessibleName(f"Game art for {save['game']}")
+        self.checkpoint_summary.setVisible(bool(save and save['checkpoint_label']))
+        if save and save['checkpoint_label']:
+            self.checkpoint_summary.setText(f"{save['checkpoint_kind']} · {save['checkpoint_label']}")
+
+    def edit_checkpoint(self):
+        save = self.current
+        if not save:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Checkpoint')
+        layout = QFormLayout(dialog)
+        kind = QComboBox()
+        kind.addItems(CHECKPOINT_KINDS)
+        kind.setCurrentText(save['checkpoint_kind'] or CHECKPOINT_KINDS[0])
+        label = QLineEdit(save['checkpoint_label'])
+        label.setMaxLength(100)
+        label.setPlaceholderText('Leave blank to clear')
+        layout.addRow('Type', kind)
+        layout.addRow('Label', label)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                self.archive.set_checkpoint(save['id'], kind.currentText(), label.text())
+            except Exception as error:
+                QMessageBox.warning(self, 'Could not save checkpoint', str(error))
+                return
+            self.refresh()
+            for index in range(self.save_list.count()):
+                item = self.save_list.item(index)
+                if item.data(Qt.ItemDataRole.UserRole)['id'] == save['id']:
+                    self.save_list.setCurrentItem(item)
+                    self.select_save(item)
+                    break
+
+    def set_game_row_art(self, item, game):
+        item.setIcon(self.artwork.icon(game['game'], game['platform'], self.home_game_list.iconSize()))
+
+    def refresh_artwork(self):
+        self.update_save_header()
+        for index in range(self.home_game_list.count()):
+            row = self.home_game_list.item(index)
+            data = row.data(Qt.ItemDataRole.UserRole)
+            if data:
+                self.set_game_row_art(row, data)
+
+    def choose_save_art(self):
+        if self.current:
+            self.choose_game_art(self.current)
+
+    def home_artwork_menu(self, position):
+        row = self.home_game_list.itemAt(position)
+        if row is None or not row.data(Qt.ItemDataRole.UserRole):
+            return
+        menu = QMenu(self)
+        menu.addAction('Choose Game Art…', lambda: self.choose_game_art(row.data(Qt.ItemDataRole.UserRole)))
+        menu.exec(self.home_game_list.viewport().mapToGlobal(position))
+
+    def choose_game_art(self, game):
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose game art', '', 'Images (*.png *.jpg *.jpeg *.webp)')
+        if path:
+            try:
+                self.artwork.assign(game['game'], game['platform'], path)
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(self, 'Could not save game art', str(error))
+
     def choose_game(self, item):
         data = item.data(Qt.ItemDataRole.UserRole)
         if data:
@@ -377,9 +773,14 @@ class Window(ExistingWindow):
             games=self.archive.games(query,platform)
             self.home_game_list.clear()
             for game in games[:100]:
-                row=QListWidgetItem(f"{game['game']}   ·   {game['platform']}\n{game['saves']} archived saves  ·  {game['title_id']}")
+                count = f"{game['saves']} archived {'save' if game['saves'] == 1 else 'saves'}"
+                title_id = game['title_id']
+                if title_id != game['platform']:
+                    count += f'  ·  {title_id}'
+                row=QListWidgetItem(f"{game['game']}   ·   {game['platform']}\n{count}")
                 row.setData(Qt.ItemDataRole.UserRole,game)
-                row.setIcon(cover_icon(game['game'],game['platform'],size=QSize(100,70)))
+                row.setSizeHint(QSize(0, 106))
+                self.set_game_row_art(row, game)
                 self.home_game_list.addItem(row)
             if not games:
                 item=QListWidgetItem('No games match your search. Import saves to populate the library.')
@@ -387,6 +788,8 @@ class Window(ExistingWindow):
             self.home_recent_list.clear()
             for save in all_saves[:6]:
                 item=QListWidgetItem(f"{save['game']}  ·  {save['platform']}\n{save['label']}")
+                if save['checkpoint_label']:
+                    item.setText(item.text() + f" · {save['checkpoint_label']}")
                 item.setData(Qt.ItemDataRole.UserRole,save);self.home_recent_list.addItem(item)
             if not all_saves:self.home_recent_list.addItem('No archived saves yet')
         except Exception as exc:

@@ -35,14 +35,19 @@ def card(title,value,description=''):
     if description:v.addWidget(ui.label(description,11,True))
     return f,num
 
-def cover_icon(game, platform, photo=None, size=QSize(260,152)):
+def cover_icon(game, platform, photo=None, size=QSize(260,152), *, horizontal_focus=.5):
     """Use cached cover where present; otherwise render a legible branded placeholder offline."""
     pm=QPixmap(size)
     if photo and Path(photo).is_file():
         original=QPixmap(str(photo))
         if not original.isNull():
             fitted=original.scaled(size,Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
-            p=QPainter(pm);p.drawPixmap(0,0,fitted);p.end();return QIcon(pm)
+            pm.fill(QColor('#171522'))
+            p=QPainter(pm)
+            p.drawPixmap(round((size.width()-fitted.width())*horizontal_focus),
+                         (size.height()-fitted.height())//2,fitted)
+            p.end()
+            return QIcon(pm)
     digest=hashlib.sha256((platform+':'+game).encode('utf-8')).digest()
     base=[('#31244e','#574081'),('#203a4b','#32667d'),('#443044','#75516e'),('#273e38','#3c6860')][digest[0]%4]
     pm.fill(QColor(base[0]));p=QPainter(pm)

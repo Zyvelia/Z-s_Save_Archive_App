@@ -49,6 +49,23 @@ a storefront to narrow the scan. Review the checked folders and click
 Import selected saves to copy them into the archive. Re-running the scan
 skips identical saves already archived.
 
+Library and interface preferences
+---------------------------------
+
+In Browse Saves, use Set Checkpoint to add a chapter, boss, or completion
+milestone. Sort Saves and Sort Packages support up to three columns, with
+independent ascending or descending directions. Your sort choices are saved.
+
+The dashboard and save inspector show local game artwork. For Borderlands 4
+and exact installed Steam matches, the app can download and cache official
+Steam artwork. Use Choose Game Art to override it with a local image.
+
+Open Settings to choose Dashboard Cards, Interface Text Size, or Keyboard
+Shortcuts. Open the Command Palette from the sidebar or with Ctrl+K by default.
+Use Remember Save USB to select a connected removable Windows volume. Save
+import dialogs start on that volume when it reconnects, even if Windows
+assigns it a different drive letter.
+
 Removing archived saves
 -----------------------
 

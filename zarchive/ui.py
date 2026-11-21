@@ -192,11 +192,15 @@ class MainWindow(QMainWindow):
     def import_ps4(self):
         self.import_local_save('PS4', self.archive.import_ps4_save)
 
+    def save_source_directory(self, platform):
+        return ''
+
     def import_local_save(self, platform, importer):
         choice=QMessageBox.question(self,f'{platform} save source','Import a folder? Choose Yes for a folder, No for a single file.',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No|QMessageBox.StandardButton.Cancel)
         if choice==QMessageBox.StandardButton.Cancel:return
-        path=(QFileDialog.getExistingDirectory(self,f'Choose {platform} save folder') if choice==QMessageBox.StandardButton.Yes
-              else QFileDialog.getOpenFileName(self,f'Choose {platform} save file')[0])
+        start = self.save_source_directory(platform)
+        path=(QFileDialog.getExistingDirectory(self,f'Choose {platform} save folder',start) if choice==QMessageBox.StandardButton.Yes
+              else QFileDialog.getOpenFileName(self,f'Choose {platform} save file',start)[0])
         if not path:return
         game = self.choose_game_title(platform)
         if game:
@@ -239,7 +243,7 @@ class MainWindow(QMainWindow):
         except Exception as e:QMessageBox.warning(self,'Backup failed',str(e))
 
     def import_folder(self):
-        path=QFileDialog.getExistingDirectory(self,'Select PS3 save folder or parent directory')
+        path=QFileDialog.getExistingDirectory(self,'Select PS3 save folder or parent directory',self.save_source_directory('PS3'))
         if not path:return
         try:
             root=Path(path);folders=discover_saves(root)

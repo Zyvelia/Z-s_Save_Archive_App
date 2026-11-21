@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os,sys,json
 from pathlib import Path
-from PySide6.QtCore import Qt,QByteArray,QTimer
+from PySide6.QtCore import Qt,QByteArray,QEvent,QTimer
 from PySide6.QtGui import QKeySequence,QShortcut
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLineEdit,QListWidget,
  QListWidgetItem,QPushButton,QMessageBox,QInputDialog,QCheckBox,QLabel,QWidget,QComboBox,QFormLayout)
@@ -10,28 +10,50 @@ from .ui_v15 import Window as BaseWindow
 from .ui_v04 import STYLE
 
 class CommandPalette(QDialog):
-    def __init__(self,commands,parent=None):
-        super().__init__(parent);self.setWindowTitle('Quick actions  ·  Ctrl+K');self.resize(590,430)
-        self.commands=commands
-        layout=QVBoxLayout(self)
-        self.query=QLineEdit();self.query.setPlaceholderText('Search actions...');layout.addWidget(self.query)
-        self.results=QListWidget();layout.addWidget(self.results)
+    def __init__(self, commands, parent=None, shortcuts=None):
+        super().__init__(parent)
+        self.setWindowTitle('Command Palette')
+        self.resize(630, 460)
+        self.commands = commands
+        self.shortcuts = shortcuts or {}
+        layout = QVBoxLayout(self)
+        self.query = QLineEdit()
+        self.query.setPlaceholderText('Search actions…')
+        self.query.installEventFilter(self)
+        layout.addWidget(self.query)
+        self.results = QListWidget()
+        layout.addWidget(self.results)
         self.query.textChanged.connect(self.refresh)
+        self.query.returnPressed.connect(lambda: self.run_item(self.results.currentItem()))
         self.results.itemActivated.connect(self.run_item)
-        self.refresh();self.query.setFocus()
+        self.refresh()
+        self.query.setFocus()
+
     def refresh(self):
         self.results.clear()
-        needle=self.query.text().lower().strip()
+        terms = self.query.text().casefold().split()
         for name in self.commands:
-            if needle in name.lower():self.results.addItem(name)
-        if self.results.count():self.results.setCurrentRow(0)
-    def run_item(self,item):
-        fn=self.commands.get(item.text())
-        if fn:self.accept();QTimer.singleShot(0,fn)
-    def keyPressEvent(self,event):
-        if event.key()==Qt.Key.Key_Return and self.results.currentItem():
-            self.run_item(self.results.currentItem());return
-        super().keyPressEvent(event)
+            if all(term in name.casefold() for term in terms):
+                shortcut = self.shortcuts.get(name, '')
+                item = QListWidgetItem(f'{name}    ·    {shortcut}' if shortcut else name)
+                item.setData(Qt.ItemDataRole.UserRole, name)
+                self.results.addItem(item)
+        if self.results.count():
+            self.results.setCurrentRow(0)
+
+    def run_item(self, item):
+        if item is not None:
+            self.accept()
+            QTimer.singleShot(0, self.commands[item.data(Qt.ItemDataRole.UserRole)])
+
+    def eventFilter(self, widget, event):
+        if widget is self.query and event.type() == QEvent.Type.KeyPress and self.results.count():
+            if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+                step = 1 if event.key() == Qt.Key.Key_Down else -1
+                row = min(self.results.count()-1, max(0, self.results.currentRow()+step))
+                self.results.setCurrentRow(row)
+                return True
+        return super().eventFilter(widget, event)
 
 class ActivityDialog(QDialog):
     def __init__(self,archive,parent=None):

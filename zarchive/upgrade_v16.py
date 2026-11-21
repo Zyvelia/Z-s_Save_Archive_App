@@ -87,8 +87,8 @@ class ArchiveV16(ArchiveV15):
         if platform not in ('All','PS3','PC','PS4') or category not in ('All','Legit','Modded','Unsorted'):
             raise ValueError('Invalid filter')
         term='%'+str(query).strip()[:200].replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-        where="(game LIKE ? ESCAPE '\\' OR title_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\') AND (?='All' OR platform=?) AND (?='All' OR category=?)"
-        args=(term,)*5+(platform,platform,category,category)
+        where="(game LIKE ? ESCAPE '\\' OR title_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR checkpoint_label LIKE ? ESCAPE '\\' OR checkpoint_kind LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\') AND (?='All' OR platform=?) AND (?='All' OR category=?)"
+        args=(term,)*7+(platform,platform,category,category)
         count=self.conn.execute('SELECT COUNT(*) FROM active_saves WHERE '+where,args).fetchone()[0]
         rows=[dict(r) for r in self.conn.execute('SELECT * FROM active_saves WHERE '+where+' ORDER BY imported_at DESC,game COLLATE NOCASE LIMIT ? OFFSET ?',args+(limit,offset))]
         for r in rows:
