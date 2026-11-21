@@ -16,6 +16,7 @@ from pathlib import Path
 
 MAX_IMPORT_BYTES = 512 * 1024 * 1024
 CATEGORIES = ('Legit', 'Modded', 'Unsorted')
+CHECKPOINT_KINDS = ('Chapter', 'Boss', 'Completion milestone')
 DEFAULT_TAGS = ('Starter Save','Mid-Game','Endgame','100% Complete','New Game+','All Unlocks','All Characters','All Skills','All Weapons','All Cosmetics','Max Money','Max Level','Max XP','Unlimited Resources','Legendary Gear','Rare Items','Modded Weapons','Perfect Build','Hardcore','No Deaths','Speedrun','Challenge Run','Backup','Tested','Untested','PS4','PS4 USB Backup','PS4 FTP Backup')
 ORIGIN_KINDS = ('Unknown','My own save','Friend / shared privately','Community upload','Website / download','PS3 console backup','PC / local game','Other','PS4 console backup')
 TITLE_ID = re.compile(r'^[A-Z]{4}[0-9]{5}$')
@@ -134,6 +135,9 @@ class Archive:
                 self.conn.execute(f"ALTER TABLE saves ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         if 'removed_at' not in cols:
             self.conn.execute('ALTER TABLE saves ADD COLUMN removed_at TEXT')
+        for column in ('checkpoint_kind', 'checkpoint_label'):
+            if column not in cols:
+                self.conn.execute(f"ALTER TABLE saves ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         self.conn.execute('CREATE TEMP VIEW IF NOT EXISTS active_saves AS SELECT * FROM saves WHERE removed_at IS NULL')
         self.conn.commit()
         self._recover_interrupted_removals()
@@ -382,6 +386,18 @@ class Archive:
         finally:
             shutil.rmtree(stage,ignore_errors=True)
 
+    def set_checkpoint(self, record_id, kind, label):
+        label = ' '.join(label.split())
+        if len(label) > 100 or (label and kind not in CHECKPOINT_KINDS):
+            raise ValueError('Choose a checkpoint type and enter a label up to 100 characters.')
+        with self.conn:
+            updated = self.conn.execute(
+                'UPDATE saves SET checkpoint_kind=?, checkpoint_label=? WHERE id=? AND removed_at IS NULL',
+                (kind if label else '', label, record_id),
+            )
+            if updated.rowcount != 1:
+                raise ValueError('Save not found.')
+
     def set_tags(self, record_id: str, tags: list[str]):
         clean=[]
         for tag in tags:
@@ -417,6 +433,8 @@ class Archive:
             raise FileExistsError('Backup exists; choose a new filename')
         manifest={k:row[k] for k in ('platform','game','title_id','category','label','notes','region','status','file_hash','size_bytes','file_count','source_folder','imported_at')}
         manifest['tags']=json.loads(row['tags_json'] or '[]')
+        if row['checkpoint_label']:
+            manifest['checkpoint'] = {'kind': row['checkpoint_kind'], 'label': row['checkpoint_label']}
         manifest['origin']={k: row[k] for k in ('origin_kind','origin_name','origin_url','origin_notes')}
         manifest['created_at']=now()
         fd,tmp=tempfile.mkstemp(prefix='.backup-',suffix='.zip',dir=target.parent)
@@ -439,9 +457,9 @@ class Archive:
     def list_saves(self,query: str='',category: str='All',platform: str='All',tag: str='All') -> list[dict]:
         q=f'%{query.strip()}%'
         rows=[dict(r) for r in self.conn.execute("""SELECT * FROM active_saves WHERE
-            (game LIKE ? OR title_id LIKE ? OR label LIKE ? OR notes LIKE ? OR tags_json LIKE ? OR origin_kind LIKE ? OR origin_name LIKE ? OR origin_url LIKE ?)
+            (game LIKE ? OR title_id LIKE ? OR label LIKE ? OR notes LIKE ? OR tags_json LIKE ? OR origin_kind LIKE ? OR origin_name LIKE ? OR origin_url LIKE ? OR checkpoint_kind LIKE ? OR checkpoint_label LIKE ?)
             AND (?='All' OR category=?) AND (?='All' OR platform=?)
-            ORDER BY imported_at DESC,game COLLATE NOCASE""",(q,q,q,q,q,q,q,q,category,category,platform,platform))]
+            ORDER BY imported_at DESC,game COLLATE NOCASE""",(q,q,q,q,q,q,q,q,q,q,category,category,platform,platform))]
         for r in rows:
             r['tags']=json.loads(r['tags_json'] or '[]')
         return [r for r in rows if tag=='All' or tag in r['tags']]

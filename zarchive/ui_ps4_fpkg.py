@@ -5,10 +5,23 @@ from threading import Event
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPlainTextEdit, QProgressBar, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .ps4_fpkg import CATEGORIES, build_packages, scan_build_inputs, validate_tool
+from .ui_preferences import choose_sort, sorted_by, valid_sort
+
+PACKAGE_SORT_FIELDS = ('Game', 'Title ID', 'Version', 'Package type', 'GP4', 'Dump path')
+
+
+class PackageRow(QTreeWidgetItem):
+    def __init__(self, labels, values):
+        super().__init__(labels)
+        self.sort_values = values
+        self.sort_rank = 0
+
+    def __lt__(self, other):
+        return self.sort_rank < other.sort_rank
 
 
 class DirectoryInput(QLineEdit):
@@ -58,6 +71,8 @@ class FpkgPanel(QWidget):
         self.dump_items = []
         self.scan_path = None
         self.nearby_gp4s = {}
+        self.package_sort = valid_sort(settings.load_settings().get('package_sort'),
+                                       PACKAGE_SORT_FIELDS, [('Game', False)])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 23, 25, 19)
         layout.setSpacing(12)
@@ -103,6 +118,9 @@ class FpkgPanel(QWidget):
         self.storage.addItems(['digital50', 'bd50'])
         options.addWidget(QLabel('Storage'))
         options.addWidget(self.storage)
+        self.sort_button = QPushButton('Sort Packages…')
+        self.sort_button.clicked.connect(self.configure_sort)
+        options.addWidget(self.sort_button)
         options.addStretch()
         layout.addLayout(options)
 
@@ -194,7 +212,7 @@ class FpkgPanel(QWidget):
         active = self.worker is not None
         for widget in (self.tool, self.tool_button, self.source, self.source_button,
                        self.output, self.output_button, self.existing_base, self.base_button,
-                       self.existing_gp4, self.gp4_button, self.tree, self.keystone, self.storage):
+                       self.existing_gp4, self.gp4_button, self.tree, self.keystone, self.storage, self.sort_button):
             widget.setEnabled(not active)
         self.scan_button.setEnabled(not active and bool(self.source.text().strip()))
         self.build_button.setEnabled(not active and self.scan_path is not None and bool(self.selected()))
@@ -230,24 +248,64 @@ class FpkgPanel(QWidget):
             if dump.title_id not in groups:
                 count = saves.get(dump.title_id, 0)
                 badge = f'{count} archived save(s)' if count else 'No archived saves'
-                group = QTreeWidgetItem([f'{titles.get(dump.title_id, dump.title)} [{dump.title_id}]', '', '', badge])
+                title = titles.get(dump.title_id, dump.title)
+                group = PackageRow([f'{title} [{dump.title_id}]', '', '', badge],
+                                   {'Game': title.casefold(), 'Title ID': dump.title_id})
                 groups[dump.title_id] = group
                 self.tree.addTopLevelItem(group)
             gp4 = self.nearby_gp4s.get(dump.path)
-            child = QTreeWidgetItem([f'{CATEGORIES[dump.category]} · {dump.title}',
-                                     dump.build_version or '—', gp4.name if gp4 else 'Generate', str(dump.path)])
+            child = PackageRow([f'{CATEGORIES[dump.category]} · {dump.title}',
+                                dump.build_version or '—', gp4.name if gp4 else 'Generate', str(dump.path)],
+                               {'Game': dump.title.casefold(), 'Title ID': dump.title_id,
+                                'Version': tuple(int(part) for part in dump.build_version.split('.')
+                                                 if part.isdigit()),
+                                'Package type': tuple(CATEGORIES).index(dump.category),
+                                'GP4': gp4.name.casefold() if gp4 else '', 'Dump path': str(dump.path).casefold()})
             child.setToolTip(2, str(gp4) if gp4 else 'Generate a GP4 when building this dump')
             child.setToolTip(3, str(dump.path))
             child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             child.setCheckState(0, Qt.CheckState.Unchecked)
             groups[dump.title_id].addChild(child)
             self.dump_items.append((child, dump))
+        self.apply_package_sort()
         self.tree.expandAll()
         self.scan_path = self.source.text().strip()
         self.status.setText(f'{len(dumps)} package dump(s) in {len(groups)} game(s) · {len(errors)} skipped')
         if errors or notices:
             self.log.appendPlainText('\n'.join([*errors, *notices]))
             self.log_toggle.setChecked(True)
+
+    def configure_sort(self):
+        choice = choose_sort(self, PACKAGE_SORT_FIELDS, self.package_sort)
+        if choice is None:
+            return
+        settings = self.settings.load_settings()
+        settings['package_sort'] = choice
+        try:
+            self.settings.save_settings(settings)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Could not save sort order', str(error))
+            return
+        self.package_sort = choice
+        self.apply_package_sort()
+
+    def apply_package_sort(self):
+        groups = [self.tree.topLevelItem(index) for index in range(self.tree.topLevelItemCount())]
+        for group in groups:
+            children = [group.child(index) for index in range(group.childCount())]
+            for index, child in enumerate(sorted_by(children, self.package_sort,
+                                                    lambda item, field: item.sort_values[field])):
+                child.sort_rank = index
+            group.sort_values.update({
+                'Version': max(child.sort_values['Version'] for child in children),
+                'Package type': min(child.sort_values['Package type'] for child in children),
+                'GP4': min(child.sort_values['GP4'] for child in children),
+                'Dump path': min(child.sort_values['Dump path'] for child in children),
+            })
+        for index, group in enumerate(sorted_by(groups, self.package_sort,
+                                                lambda item, field: item.sort_values[field])):
+            group.sort_rank = index
+        self.tree.sortItems(0, Qt.SortOrder.AscendingOrder)
 
     def build(self):
         if not self.output.text().strip() or not self.tool.text().strip():
