@@ -55,6 +55,17 @@ PS4 imports are tagged PS4 and retain a CUSA title ID when present in the
 source path. Use the PS4 filter in the dashboard or library. In Settings,
 enable Hide PS3 tools and dashboard shortcuts for a PS4-focused layout.
 
+Borderlands saves
+----------------
+
+In Save Editor, open Borderlands Save Editor. Choose the game and platform,
+select an archived save or a decrypted export, and prepare a working copy.
+Configure the corresponding Windows editor using the linked project. Use
+its character and weapon controls to edit the working copy, then archive
+the edited copy as a new entry. The available fields depend on the editor.
+PS3 support covers Borderlands, Borderlands 2 and The Pre-Sequel. The PS4
+choices are Borderlands 3 and Tiny Tina's Wonderlands.
+
 PS4 dump to FPKG
 ----------------
 

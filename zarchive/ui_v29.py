@@ -86,7 +86,7 @@ class AppDataDialog(QDialog):
 class Window(ExistingWindow):
     def __init__(self,root):
         super().__init__(root)
-        self.setWindowTitle("Z's Save Archive • v3.6.26")
+        self.setWindowTitle("Z's Save Archive • v3.6.27")
         self.resize(1540,930);self.setMinimumSize(1060,720)
         self.classic_content=self.takeCentralWidget()
         # All existing tools retain their QAction callbacks, even though the menu is hidden.
@@ -255,6 +255,11 @@ class Window(ExistingWindow):
         from .ui_v24 import HomebrewCenter
         HomebrewCenter(self,root=self.archive.root).exec()
 
+    def open_borderlands_editor(self):
+        from .ui_borderlands_edit import BorderlandsWorkspace
+
+        BorderlandsWorkspace(self.archive, self.ui_settings, self).exec()
+
     def _make_section(self, section):
         """Build action panels from existing wired QAction objects (no detached tool copies)."""
         if section == 'Dump to FPKG Builder':
@@ -279,7 +284,10 @@ class Window(ExistingWindow):
             outer.addLayout(row)
         elif section=='Save Editor':
             b=QPushButton('Open Universal Save Editor');b.setObjectName('newAction');b.clicked.connect(self.editor_ui);outer.addWidget(b)
-            outer.addWidget(txt('Unsupported or experimental game-specific editing stays hidden until validated.',11,True))
+            borderlands = QPushButton('Open Borderlands Save Editor')
+            borderlands.setObjectName('newAction')
+            borderlands.clicked.connect(self.open_borderlands_editor)
+            outer.addWidget(borderlands)
         elif section=='PS3 Tools':
             row=QHBoxLayout()
             for label,fn in [('Homebrew Manager',self.homebrew),('Browse PS3 FTP',lambda:self.open_classic('ftp'))]:
