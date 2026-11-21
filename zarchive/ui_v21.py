@@ -30,8 +30,8 @@ class DiscPackageWorker(TaskWorker):
     extraction_percent = Signal(int)
     console_status = Signal(str)
 
-    def __init__(self, iso, toolkit, output, extractor):
-        super().__init__(build_pkgs_locally, iso, toolkit, output, extractor=extractor or None)
+    def __init__(self, iso, toolkit, output):
+        super().__init__(build_pkgs_locally, iso, toolkit, output)
         self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit,
                            console_status=self.console_status.emit)
 
@@ -63,10 +63,9 @@ class DiscPackageDialog(QDialog):
                            ('Folder…', lambda: QFileDialog.getExistingDirectory(self, 'Choose Retail2Pkg folder')),
                            ('ZIP…', lambda: self.pick_file('Retail2Pkg ZIP (*.zip)')))
         self.output = add('Save PKGs to', ('Browse…', lambda: QFileDialog.getExistingDirectory(self, 'Choose PKG output folder')))
-        self.extractor = add('ISO extractor', ('Browse…', lambda: self.pick_file('7z.exe or WinRAR.exe (*.exe)')))
-        self.extractor.setPlaceholderText('7z.exe or WinRAR.exe · auto-detect 7-Zip if blank')
         self.extraction = QProgressBar()
-        self.extraction.setFormat('ISO extraction: %p%')
+        self.extraction.setFormat('Ready to extract ISO')
+        self.extraction.setValue(0)
         layout.addWidget(self.extraction)
         self.batch_status = QLabel()
         self.batch_status.setWordWrap(True)
@@ -97,8 +96,8 @@ class DiscPackageDialog(QDialog):
         return QFileDialog.getOpenFileName(self, 'Choose file', '', file_filter)[0]
 
     def start_build(self):
-        iso, toolkit, output, extractor = (
-            field.text().strip() for field in (self.iso, self.toolkit, self.output, self.extractor)
+        iso, toolkit, output = (
+            field.text().strip() for field in (self.iso, self.toolkit, self.output)
         )
         if not (iso and toolkit and output):
             QMessageBox.warning(self, 'Missing build input', 'Choose the ISO, Retail2Pkg toolkit and output folder.')
@@ -109,15 +108,14 @@ class DiscPackageDialog(QDialog):
             'the Windows console if the batch asks you to press a key.'
         ) != QMessageBox.StandardButton.Yes:
             return
-        self.using_winrar = Path(extractor).name.casefold() == 'winrar.exe'
         self.extraction.setRange(0, 100)
-        self.extraction.setFormat('ISO extraction: %p%')
+        self.extraction.setFormat('Preparing build…')
         self.extraction.setValue(0)
         self.batch_status.clear()
         self.log.clear()
         self.build_button.setEnabled(False)
         self.output_button.setEnabled(False)
-        self.worker = DiscPackageWorker(iso, toolkit, output, extractor)
+        self.worker = DiscPackageWorker(iso, toolkit, output)
         self.worker.message.connect(self.log.appendPlainText)
         self.worker.extraction_percent.connect(self.show_extraction_progress)
         self.worker.console_status.connect(self.batch_status.setText)
@@ -127,12 +125,11 @@ class DiscPackageDialog(QDialog):
         self.worker.start()
 
     def show_extraction_progress(self, percent):
-        if self.using_winrar and percent == 0:
+        if percent == 0:
             self.extraction.setRange(0, 0)
-            self.extraction.setFormat('Extracting with WinRAR…')
         else:
             self.extraction.setRange(0, 100)
-            self.extraction.setFormat('ISO extraction: %p%')
+            self.extraction.setFormat('ISO extraction complete')
             self.extraction.setValue(percent)
 
     def show_result(self, result):
@@ -149,6 +146,9 @@ class DiscPackageDialog(QDialog):
         if self.extraction.maximum() == 0:
             self.extraction.setRange(0, 100)
             self.extraction.setFormat('ISO extraction failed')
+            self.extraction.setValue(0)
+        elif self.extraction.value() == 0:
+            self.extraction.setFormat('Build stopped')
         self.batch_status.clear()
         self.log.appendPlainText(f'Build stopped: {error}')
 
