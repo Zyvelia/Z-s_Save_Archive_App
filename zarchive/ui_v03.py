@@ -330,13 +330,15 @@ class Window(ui.MainWindow):
     def dropEvent(self,event):
         paths=[Path(u.toLocalFile()) for u in event.mimeData().urls() if u.isLocalFile()]
         if not paths:return
-        game,ok=QInputDialog.getText(self,'PC drag-and-drop import','PC game name (for all dropped items):')
-        if not ok or not game.strip():return
+        pc_paths = [path for path in paths if not (path.is_dir() and (path / 'PARAM.SFO').is_file())]
+        game = self.choose_game_title('PC') if pc_paths else ''
+        if pc_paths and not game:
+            return
         okcount=0;failed=[]
         for p in paths:
             try:
                 if p.is_dir() and (p/'PARAM.SFO').is_file():self.archive.import_save(p)
-                else:self.archive.import_pc_save(p,game.strip())
+                else:self.archive.import_pc_save(p,game)
                 okcount+=1
             except Exception as e:failed.append(f'{p.name}: {e}')
         self.refresh();QMessageBox.information(self,'Import results',f'Imported {okcount} item(s).\n'+'\n'.join(failed[:15]))

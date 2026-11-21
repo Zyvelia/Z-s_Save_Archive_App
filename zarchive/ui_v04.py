@@ -168,7 +168,7 @@ class Window(PreviousWindow):
         if not getattr(self,'_v04_ready',False):
             return super().show_dashboard()
         self.mode='dashboard';self.activate_nav(0)
-        self.heading.setText('Dashboard');self.subheading.setText('Your PS3 and PC saves, backups, and recent activity')
+        self.heading.setText('Dashboard');self.subheading.setText('Your PS3, PS4 and PC saves, backups, and recent activity')
         d=self.archive.dashboard()
         for widget,value in zip(self.dashboard_nums,(d['games'],d['saves'],d['verified'],d['backups'])): widget.setText(str(value))
         self.disk_label.setText(f"Archived save data: {d['bytes']/1048576:.1f} MiB  •  {d['backups']} backup versions")
@@ -177,15 +177,14 @@ class Window(PreviousWindow):
             item=QListWidgetItem(f"{row['game']}  ·  {row['label']}\n{row['platform']}  •  {row['category']}  •  {row['status']}")
             item.setData(Qt.ItemDataRole.UserRole,row);self.recent_list.addItem(item)
         if not self.recent_list.count():
-            item=QListWidgetItem('Your library is empty. Import a PS3 or PC save to begin.')
+            item=QListWidgetItem('No archived saves yet.')
             item.setFlags(Qt.ItemFlag.NoItemFlags);self.recent_list.addItem(item)
         self.statusBar().showMessage('Dashboard loaded — local archive ready')
 
     def open_recent(self,item):
         row=item.data(Qt.ItemDataRole.UserRole)
         if not row:return
-        self.show_saves()
-        self.search.setText(row['game'])
+        self.show_game_saves(row['game'], row['platform'], row['title_id'])
         for i in range(self.save_list.count()):
             it=self.save_list.item(i)
             if it.data(Qt.ItemDataRole.UserRole)['id']==row['id']:

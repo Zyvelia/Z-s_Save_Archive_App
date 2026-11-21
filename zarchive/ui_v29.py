@@ -85,7 +85,7 @@ class AppDataDialog(QDialog):
 class Window(ExistingWindow):
     def __init__(self,root):
         super().__init__(root)
-        self.setWindowTitle("Z's Save Archive • v3.6.24")
+        self.setWindowTitle("Z's Save Archive • v3.6.25")
         self.resize(1540,930);self.setMinimumSize(1060,720)
         self.classic_content=self.takeCentralWidget()
         # All existing tools retain their QAction callbacks, even though the menu is hidden.
@@ -169,9 +169,9 @@ class Window(ExistingWindow):
         browse=QPushButton('Open full library');browse.clicked.connect(lambda:self.open_classic('games'));bar.addWidget(browse)
         organize=QPushButton('Organize');organize.clicked.connect(lambda:self.open_section('Game Library'));bar.addWidget(organize)
         left_layout.addLayout(bar)
-        self.game_list=QListWidget();self.game_list.setObjectName('newList');self.game_list.setMinimumHeight(350)
-        self.game_list.itemActivated.connect(self.choose_game);self.game_list.itemClicked.connect(self.choose_game)
-        left_layout.addWidget(self.game_list)
+        self.home_game_list=QListWidget();self.home_game_list.setObjectName('newList');self.home_game_list.setMinimumHeight(350)
+        self.home_game_list.itemActivated.connect(self.choose_game);self.home_game_list.itemClicked.connect(self.choose_game)
+        left_layout.addWidget(self.home_game_list)
         hint=txt('Select a game to open and inspect its saves.',11,True);left_layout.addWidget(hint)
         content.addWidget(left,3)
         right=QVBoxLayout();right.setSpacing(12)
@@ -181,9 +181,9 @@ class Window(ExistingWindow):
         right.addWidget(console)
         self.ps3_widgets.append(console)
         recent,recent_layout=pane('RECENT ARCHIVED SAVES')
-        self.recent_list=QListWidget();self.recent_list.setObjectName('newList');self.recent_list.setMinimumHeight(140)
-        self.recent_list.itemClicked.connect(self.choose_recent)
-        recent_layout.addWidget(self.recent_list);right.addWidget(recent)
+        self.home_recent_list=QListWidget();self.home_recent_list.setObjectName('newList');self.home_recent_list.setMinimumHeight(140)
+        self.home_recent_list.itemClicked.connect(self.choose_recent)
+        recent_layout.addWidget(self.home_recent_list);right.addWidget(recent)
         actions,action_layout=pane('QUICK TOOLS')
         grid=QGridLayout();grid.setSpacing(7)
         quick=[('Import PS3',self.import_folder),('Import PC',self.import_pc),('Import PS4',self.import_ps4),('Backups',lambda:self.open_section('Saves & Backups')),
@@ -235,9 +235,10 @@ class Window(ExistingWindow):
         elif which=='releases':
             self.open_section('Releases')
 
-    def import_ps4(self):
-        super().import_ps4()
-        self.update_home()
+    def refresh(self, *args):
+        super().refresh(*args)
+        if hasattr(self, 'home_recent_list') and self.shell_stack.currentIndex() == 0:
+            self.update_home()
 
     def homebrew(self):
         from .ui_v24 import HomebrewCenter
@@ -323,16 +324,18 @@ class Window(ExistingWindow):
         self.shell_stack.setCurrentWidget(self.section_pages[section])
         self._set_nav(section if section in self.navbuttons else 'Game Library')
 
-    def choose_game(self,item):
-        data=item.data(Qt.ItemDataRole.UserRole)
-        if not data:return
-        self.open_classic('games')
-        self.search.setText(data['game'])
-        self.platform.setCurrentText(data['platform'])
+    def choose_game(self, item):
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if data:
+            self.shell_stack.setCurrentIndex(1)
+            self._set_nav('Saves & Backups')
+            self.show_game_saves(data['game'], data['platform'], data['title_id'])
 
-    def choose_recent(self,item):
-        row=item.data(Qt.ItemDataRole.UserRole)
-        if row:self.shell_stack.setCurrentIndex(1);self._set_nav('Saves & Backups');self.show_saves();self.search.setText(row['game'])
+    def choose_recent(self, item):
+        if item.data(Qt.ItemDataRole.UserRole):
+            self.shell_stack.setCurrentIndex(1)
+            self._set_nav('Saves & Backups')
+            self.open_recent(item)
 
     def update_home(self,*_):
         try:
@@ -350,20 +353,20 @@ class Window(ExistingWindow):
             platform=self.platform_filter.currentText();platform='All' if platform=='All Platforms' else platform
             query=self.home_search.text().strip()
             games=self.archive.games(query,platform)
-            self.game_list.clear()
+            self.home_game_list.clear()
             for game in games[:100]:
                 row=QListWidgetItem(f"{game['game']}   ·   {game['platform']}\n{game['saves']} archived saves  ·  {game['title_id']}")
                 row.setData(Qt.ItemDataRole.UserRole,game)
                 row.setIcon(cover_icon(game['game'],game['platform'],size=QSize(100,70)))
-                self.game_list.addItem(row)
+                self.home_game_list.addItem(row)
             if not games:
                 item=QListWidgetItem('No games match your search. Import saves to populate the library.')
-                item.setFlags(Qt.ItemFlag.NoItemFlags);self.game_list.addItem(item)
-            self.recent_list.clear()
+                item.setFlags(Qt.ItemFlag.NoItemFlags);self.home_game_list.addItem(item)
+            self.home_recent_list.clear()
             for save in all_saves[:6]:
                 item=QListWidgetItem(f"{save['game']}  ·  {save['platform']}\n{save['label']}")
-                item.setData(Qt.ItemDataRole.UserRole,save);self.recent_list.addItem(item)
-            if not all_saves:self.recent_list.addItem('No archived saves yet')
+                item.setData(Qt.ItemDataRole.UserRole,save);self.home_recent_list.addItem(item)
+            if not all_saves:self.home_recent_list.addItem('No archived saves yet')
         except Exception as exc:
             self.statusBar().showMessage('Dashboard refresh error: '+str(exc)[:180])
 

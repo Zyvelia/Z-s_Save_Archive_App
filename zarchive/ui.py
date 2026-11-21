@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
  QFrame,QPushButton,QLineEdit,QListWidget,QListWidgetItem,QComboBox,QTextEdit,QFileDialog,
  QMessageBox,QSplitter,QStackedWidget,QScrollArea,QGridLayout,QDialog,QDialogButtonBox,
- QFormLayout,QAbstractItemView)
+ QFormLayout,QAbstractItemView,QInputDialog)
 from .upgrade_v15 import ArchiveV15 as Archive
 from .storage import discover_saves, CATEGORIES
 
@@ -160,7 +160,14 @@ class MainWindow(QMainWindow):
             self.current=None;self.detail_title.setText('Choose a save to inspect')
     def select_game(self,item):
         title,game,platform=item.data(Qt.ItemDataRole.UserRole)
-        self.platform.setCurrentText(platform);self.show_saves();self.search.setText(game if platform in ('PC','PS4') else title)
+        self.show_game_saves(game, platform, title)
+
+    def show_game_saves(self, game, platform, title=''):
+        self.filter.setCurrentText('All')
+        self.tagfilter.setCurrentText('All')
+        self.platform.setCurrentText(platform)
+        self.search.setText(title if platform == 'PS3' and title else game)
+        self.show_saves()
     def select_save(self,item):
         r=item.data(Qt.ItemDataRole.UserRole);self.current=r
         self.detail_title.setText(r['game']);self.detail_meta.setText(f"{r['platform']}  •  {r['title_id']}  •  {r['region']}  •  {r['file_count']} files  •  {r['size_bytes']:,} bytes\nSHA-256: {r['file_hash'][:24]}…")
@@ -191,14 +198,30 @@ class MainWindow(QMainWindow):
         path=(QFileDialog.getExistingDirectory(self,f'Choose {platform} save folder') if choice==QMessageBox.StandardButton.Yes
               else QFileDialog.getOpenFileName(self,f'Choose {platform} save file')[0])
         if not path:return
-        from PySide6.QtWidgets import QInputDialog
-        game,ok=QInputDialog.getText(self,f'{platform} game name',f'Which {platform} game is this save from?')
-        if not ok or not game.strip():return
+        game = self.choose_game_title(platform)
+        if game:
+            self.archive_local_save(Path(path), platform, game, importer)
+
+    def choose_game_title(self, platform):
+        titles = {}
+        for row in self.archive.games(platform=platform):
+            title = row['game']
+            titles.setdefault(title.casefold(), title)
+        game, accepted = QInputDialog.getItem(
+            self, f'{platform} game title', 'Choose an existing game or type a new name:',
+            ['', *sorted(titles.values(), key=str.casefold)], 0, True,
+        )
+        game = game.strip()
+        return titles.get(game.casefold(), game) if accepted else ''
+
+    def archive_local_save(self, path, platform, game, importer):
         try:
-            importer(Path(path),game.strip())
-            self.refresh();self.statusBar().showMessage(f'{platform} save imported')
-            QMessageBox.information(self,'Imported',f'{platform} save copied into your library.')
-        except Exception as e:QMessageBox.warning(self,'Import failed',str(e))
+            importer(path, game)
+            self.refresh()
+            self.statusBar().showMessage(f'{platform} save imported')
+            QMessageBox.information(self, 'Imported', f'{platform} save copied into your library.')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Import failed', str(exc))
 
     def backup_selected(self):
         if not self.current:

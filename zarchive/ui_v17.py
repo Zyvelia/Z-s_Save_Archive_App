@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os,sys
 from pathlib import Path
-from PySide6.QtCore import Qt,QTimer,QAbstractTableModel,QModelIndex
+from PySide6.QtCore import Qt,QTimer,QAbstractTableModel,QModelIndex,Signal,Slot
 from PySide6.QtGui import QKeySequence,QShortcut
 from PySide6.QtWidgets import (QInputDialog,QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLineEdit,QLabel,
     QPushButton,QTableView,QComboBox,QListWidget,QAbstractItemView,QMessageBox,QFileDialog,
@@ -129,10 +129,13 @@ class BackgroundPublisherDialog(BasePublisherDialog):
         return self.run_safe(schedule)
 
 class Window(BaseWindow):
+    local_import_finished = Signal(str)
+
     def __init__(self,root):
         super().__init__(root);self.setWindowTitle("Z's Save Archive  •  PS3 + PC  v1.7")
         self.archive.recover_interrupted_jobs()
         self.runner=JobRunner(root)
+        self.local_import_finished.connect(self.finish_local_import)
         menu=self.tools_btn.menu();menu.addSeparator()
         menu.addAction('Large Library (paged model)',self.large_library)
         menu.addAction('Background Jobs & Recovery',self.jobs_ui)
@@ -148,17 +151,24 @@ class Window(BaseWindow):
         if not path:return
         jid=self.runner.submit('backup','Backup: '+r['game'],lambda a,c:a.backup_zip(r['id'],Path(path)))
         self.statusBar().showMessage('Backup queued: '+jid[:8]+' · see Background Jobs')
-    def import_pc(self):
-        choice=QMessageBox.question(self,'PC save source','Import a folder? Yes = folder, No = file',
-            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No|QMessageBox.StandardButton.Cancel)
-        if choice==QMessageBox.StandardButton.Cancel:return
-        path=(QFileDialog.getExistingDirectory(self,'Select PC save folder') if choice==QMessageBox.StandardButton.Yes
-              else QFileDialog.getOpenFileName(self,'Select PC save file')[0])
-        if not path:return
-        game,ok=QInputDialog.getText(self,'Game title','Enter the PC game name')
-        if not ok or not game.strip():return
-        jid=self.runner.submit('import','Import PC: '+game.strip(),lambda a,c:a.import_pc_save(Path(path),game.strip()))
-        self.statusBar().showMessage('PC save import queued: '+jid[:8]+' · refresh the library after completion')
+    def archive_local_save(self, path, platform, game, importer):
+        method = importer.__name__
+        label = f'Import {platform}: {game}'
+        job = self.runner.submit('import', label, lambda archive, cancel: getattr(archive, method)(path, game),
+                                 on_done=self.local_import_finished.emit)
+        self.statusBar().showMessage(f'{platform} save import queued: {job[:8]}')
+
+    @Slot(str)
+    def finish_local_import(self, job_id):
+        self.refresh()
+        row = self.archive.conn.execute('SELECT state,detail FROM jobs_v17 WHERE id=?', (job_id,)).fetchone()
+        if row is None:
+            return
+        if row['state'] == 'failed':
+            self.statusBar().showMessage(f"Save import failed: {row['detail']}")
+        elif row['state'] == 'completed':
+            self.statusBar().showMessage('Save imported into your library.')
+
     def jobs_ui(self):JobCenter(self.archive,self.runner,self).exec()
     def settings_hub(self):
         if SettingsHub(self.archive,self).exec()==QDialog.DialogCode.Accepted:self._apply_density()
