@@ -172,7 +172,9 @@ def run_windows_batch(stage, timeout, progress, console_status):
 
 def find_packages(stage: Path) -> list[Path]:
     for folder in sorted(stage.iterdir()):
-        if not folder.is_dir() or folder.is_symlink() or not folder.name.upper().startswith(('BL', 'BC')):
+        # CFW2OFW can name the directory after the game followed by its disc ID.
+        # Retail2Pkg names the game and update PKGs after that full directory name.
+        if not folder.is_dir() or folder.is_symlink() or getattr(folder, 'is_junction', lambda: False)():
             continue
         game = folder / f'{folder.name}.pkg'
         update = folder / f'{folder.name}_-_Update.pkg'

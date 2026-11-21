@@ -82,18 +82,18 @@ class DiscPackageBuildTests(unittest.TestCase):
                 with ZipFile(asset_path('Retail2Pkg_ISO_Launcher_v3.zip')) as archive:
                     self.assertEqual((stage / 'Retail2Pkg.bat').read_bytes(),
                                      archive.read('Retail2Pkg ISO Launcher/Retail2Pkg/Retail2Pkg.bat'))
-                packages = stage / 'BLUS30982'
+                packages = stage / 'Borderlands_2_(BLUS30982)'
                 packages.mkdir()
-                for suffix in ('', '_-_Update'):
-                    (packages / f'BLUS30982{suffix}.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
+                for suffix in ('', '_-_Update', '_-_Fix'):
+                    (packages / f'{packages.name}{suffix}.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
                 return SimpleNamespace(returncode=0)
 
             with patch('zarchive.retail2pkg_v31.copy_iso_game', side_effect=copy):
                 result = build_pkgs_locally(iso, output, runner=batch, progress=messages.append,
                                             extraction_progress=percentages.append)
             self.assertEqual(percentages, [0, 100])
-            self.assertEqual(len(result['packages']), 2)
-            self.assertEqual(Path(result['folder']).name, 'BLUS30982')
+            self.assertEqual(len(result['packages']), 3)
+            self.assertEqual(Path(result['folder']).name, 'Borderlands_2_(BLUS30982)')
             self.assertTrue(all(Path(pkg).is_file() for pkg in result['packages']))
 
     def test_folder_build_hands_the_staged_copy_to_retail2pkg(self):
