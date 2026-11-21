@@ -27,7 +27,7 @@ class ArchiveV11(ArchiveV10):
         return row
 
     def create_variant(self,platform,game,name):
-        if platform not in ('PS3','PC') or not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
+        if platform not in ('PS3','PC','PS4') or not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
             raise ValueError('Game not found')
         name=' '.join(str(name).split())
         if not 1<=len(name)<=90:raise ValueError('Invalid variant name')

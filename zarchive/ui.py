@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         ml.addLayout(stats)
         controls=QHBoxLayout();self.search=QLineEdit();self.search.setPlaceholderText('⌕  Search games, title IDs, saves...');self.search.textChanged.connect(self.refresh)
         controls.addWidget(self.search,1)
-        self.platform=QComboBox();self.platform.addItems(['All','PS3','PC']);self.platform.setFixedWidth(105);self.platform.currentTextChanged.connect(self.refresh);controls.addWidget(self.platform)
+        self.platform=QComboBox();self.platform.addItems(['All','PS3','PC','PS4']);self.platform.setFixedWidth(105);self.platform.currentTextChanged.connect(self.refresh);controls.addWidget(self.platform)
         self.tagfilter=QComboBox();self.tagfilter.setFixedWidth(170);self.tagfilter.currentTextChanged.connect(self.refresh);controls.addWidget(self.tagfilter)
         self.filter=QComboBox();self.filter.addItems(('All',)+CATEGORIES);self.filter.currentTextChanged.connect(self.refresh);self.filter.setFixedWidth(140);controls.addWidget(self.filter);ml.addLayout(controls)
         self.stack=QStackedWidget();ml.addWidget(self.stack,1)
@@ -160,7 +160,7 @@ class MainWindow(QMainWindow):
             self.current=None;self.detail_title.setText('Choose a save to inspect')
     def select_game(self,item):
         title,game,platform=item.data(Qt.ItemDataRole.UserRole)
-        self.platform.setCurrentText(platform);self.show_saves();self.search.setText(game if platform=='PC' else title)
+        self.platform.setCurrentText(platform);self.show_saves();self.search.setText(game if platform in ('PC','PS4') else title)
     def select_save(self,item):
         r=item.data(Qt.ItemDataRole.UserRole);self.current=r
         self.detail_title.setText(r['game']);self.detail_meta.setText(f"{r['platform']}  •  {r['title_id']}  •  {r['region']}  •  {r['file_count']} files  •  {r['size_bytes']:,} bytes\nSHA-256: {r['file_hash'][:24]}…")
@@ -180,18 +180,24 @@ class MainWindow(QMainWindow):
         elif sys.platform=='darwin':subprocess.Popen(['open',str(folder)])
         else:subprocess.Popen(['xdg-open',str(folder)])
     def import_pc(self):
-        choice=QMessageBox.question(self,'PC save source','Import a folder? Choose Yes for a folder, No for a single file.',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No|QMessageBox.StandardButton.Cancel)
+        self.import_local_save('PC', self.archive.import_pc_save)
+
+    def import_ps4(self):
+        self.import_local_save('PS4', self.archive.import_ps4_save)
+
+    def import_local_save(self, platform, importer):
+        choice=QMessageBox.question(self,f'{platform} save source','Import a folder? Choose Yes for a folder, No for a single file.',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No|QMessageBox.StandardButton.Cancel)
         if choice==QMessageBox.StandardButton.Cancel:return
-        path=(QFileDialog.getExistingDirectory(self,'Choose PC save folder') if choice==QMessageBox.StandardButton.Yes
-              else QFileDialog.getOpenFileName(self,'Choose PC save file')[0])
+        path=(QFileDialog.getExistingDirectory(self,f'Choose {platform} save folder') if choice==QMessageBox.StandardButton.Yes
+              else QFileDialog.getOpenFileName(self,f'Choose {platform} save file')[0])
         if not path:return
         from PySide6.QtWidgets import QInputDialog
-        game,ok=QInputDialog.getText(self,'PC game name','Which PC game is this save from?')
+        game,ok=QInputDialog.getText(self,f'{platform} game name',f'Which {platform} game is this save from?')
         if not ok or not game.strip():return
         try:
-            self.archive.import_pc_save(Path(path),game.strip())
-            self.refresh();self.statusBar().showMessage('PC save imported')
-            QMessageBox.information(self,'Imported','PC save copied into your library. Original unchanged.')
+            importer(Path(path),game.strip())
+            self.refresh();self.statusBar().showMessage(f'{platform} save imported')
+            QMessageBox.information(self,'Imported',f'{platform} save copied into your library.')
         except Exception as e:QMessageBox.warning(self,'Import failed',str(e))
 
     def backup_selected(self):

@@ -40,7 +40,7 @@ class LargeLibraryDialog(QDialog):
         super().__init__(parent);self.setWindowTitle('Large Library · paged save list');self.resize(1040,700)
         self.model=PagedSaveModel(archive,self);box=QVBoxLayout(self);bar=QHBoxLayout();box.addLayout(bar)
         self.query=QLineEdit();self.query.setPlaceholderText('Search games, tags, notes and save names');bar.addWidget(self.query)
-        self.platform=QComboBox();self.platform.addItems(['All','PS3','PC']);bar.addWidget(self.platform)
+        self.platform=QComboBox();self.platform.addItems(['All','PS3','PC','PS4']);bar.addWidget(self.platform)
         self.category=QComboBox();self.category.addItems(['All','Legit','Modded','Unsorted']);bar.addWidget(self.category)
         self.table=QTableView();self.table.setModel(self.model);self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

@@ -21,7 +21,7 @@ class LibraryArchive(EnhancedArchive):
         self.covers_dir=self.root/'covers';self.covers_dir.mkdir(exist_ok=True)
 
     def add_cover(self,platform,game,source):
-        if platform not in ('PS3','PC'):raise ValueError('Invalid platform')
+        if platform not in ('PS3','PC','PS4'):raise ValueError('Invalid platform')
         if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
             raise ValueError('Game not in archive')
         source=Path(source)
@@ -60,7 +60,7 @@ class LibraryArchive(EnhancedArchive):
         return [row for row in steam_games() if canonical_name(row['name'])==wanted]
 
     def steam_cover(self,platform,game,appid):
-        if platform!='PC':raise ValueError('Steam automatic covers are for PC entries only; choose a local image for PS3')
+        if platform!='PC':raise ValueError('Steam automatic covers are for PC entries only; choose a local image for console games')
         allowed={row['appid'] for row in self.steam_matches(game)}
         if str(appid) not in allowed:raise ValueError('Steam App ID does not match a detected installed game')
         path=download_steam_cover(str(appid),self.covers_dir)

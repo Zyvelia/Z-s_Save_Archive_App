@@ -2,7 +2,7 @@ Z's Save Archive
 ================
 
 A Windows desktop app for organizing, backing up, and inspecting PS3 and PC
-saves. It also includes PS3 FTP tools, a homebrew catalog, and GitHub publishing.
+saves, plus PS4 save archiving. It also includes PS3 FTP tools, a homebrew catalog, and GitHub publishing.
 
 Get started
 -----------
@@ -36,6 +36,15 @@ installer under installer_output. If Inno Setup detection fails, set ISCC_EXE
 to the full path of ISCC.exe in Command Prompt and run Build_All.bat again.
 
 Run python -m unittest discover -s tests -q to check the source.
+
+PS4 saves
+---------
+
+Choose Saves & Backups > Import PS4 Save to archive a local PS4 file or
+folder, for example a USB export or files already downloaded to your PC.
+PS4 imports are tagged PS4 and retain a CUSA title ID when present in the
+source path. Use the PS4 filter in the dashboard or library. In Settings,
+enable Hide PS3 tools and dashboard shortcuts for a PS4-focused layout.
 
 PS3 tools
 ---------

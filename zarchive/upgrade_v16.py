@@ -84,7 +84,7 @@ class ArchiveV16(ArchiveV15):
         """Database-level pagination; avoids loading all save rows for search results."""
         limit=max(1,min(250,int(limit)))
         offset=max(0,min(1000000,int(offset)))
-        if platform not in ('All','PS3','PC') or category not in ('All','Legit','Modded','Unsorted'):
+        if platform not in ('All','PS3','PC','PS4') or category not in ('All','Legit','Modded','Unsorted'):
             raise ValueError('Invalid filter')
         term='%'+str(query).strip()[:200].replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
         where="(game LIKE ? ESCAPE '\\' OR title_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\') AND (?='All' OR platform=?) AND (?='All' OR category=?)"

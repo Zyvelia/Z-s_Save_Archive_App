@@ -15,8 +15,8 @@ from pathlib import Path
 
 MAX_IMPORT_BYTES = 512 * 1024 * 1024
 CATEGORIES = ('Legit', 'Modded', 'Unsorted')
-DEFAULT_TAGS = ('Starter Save','Mid-Game','Endgame','100% Complete','New Game+','All Unlocks','All Characters','All Skills','All Weapons','All Cosmetics','Max Money','Max Level','Max XP','Unlimited Resources','Legendary Gear','Rare Items','Modded Weapons','Perfect Build','Hardcore','No Deaths','Speedrun','Challenge Run','Backup','Tested','Untested')
-ORIGIN_KINDS = ('Unknown','My own save','Friend / shared privately','Community upload','Website / download','PS3 console backup','PC / local game','Other')
+DEFAULT_TAGS = ('Starter Save','Mid-Game','Endgame','100% Complete','New Game+','All Unlocks','All Characters','All Skills','All Weapons','All Cosmetics','Max Money','Max Level','Max XP','Unlimited Resources','Legendary Gear','Rare Items','Modded Weapons','Perfect Build','Hardcore','No Deaths','Speedrun','Challenge Run','Backup','Tested','Untested','PS4','PS4 USB Backup','PS4 FTP Backup')
+ORIGIN_KINDS = ('Unknown','My own save','Friend / shared privately','Community upload','Website / download','PS3 console backup','PC / local game','Other','PS4 console backup')
 TITLE_ID = re.compile(r'^[A-Z]{4}[0-9]{5}$')
 
 
@@ -196,6 +196,12 @@ class Archive:
             shutil.rmtree(stage, ignore_errors=True)
 
     def import_pc_save(self, source: Path, game: str, category: str = 'Unsorted', label: str = '', notes: str = '') -> dict:
+        return self._import_local_save(source, game, 'PC', category, label, notes)
+
+    def import_ps4_save(self, source: Path, game: str, category: str = 'Unsorted', label: str = '', notes: str = '') -> dict:
+        return self._import_local_save(source, game, 'PS4', category, label, notes)
+
+    def _import_local_save(self, source, game, platform, category, label, notes):
         if category not in CATEGORIES:
             raise ValueError('Invalid category')
         game = game.strip()[:160]
@@ -209,7 +215,7 @@ class Archive:
             raise ValueError('Select a file or directory')
         if source == self.root or self.root in source.parents:
             raise ValueError('Cannot import from the managed archive')
-        stage = Path(tempfile.mkdtemp(prefix='.pc-import-', dir=self.root))
+        stage = Path(tempfile.mkdtemp(prefix=f'.{platform.lower()}-import-', dir=self.root))
         try:
             copied = stage/'save'
             if source.is_dir():
@@ -223,16 +229,18 @@ class Archive:
             checksum,size,files = folder_digest(copied)
             if source.is_dir() and (checksum,size,files) != folder_digest(source):
                 raise ValueError('Source changed during import')
-            if self.conn.execute('SELECT 1 FROM saves WHERE file_hash=? AND platform=?',(checksum,'PC')).fetchone():
-                raise ValueError('Identical PC save already exists (SHA-256 duplicate)')
+            if self.conn.execute('SELECT 1 FROM saves WHERE file_hash=? AND platform=?',(checksum,platform)).fetchone():
+                raise ValueError(f'Identical {platform} save already exists (SHA-256 duplicate)')
             record_id = uuid.uuid4().hex
             dest = self.data_dir/record_id
             copied.rename(dest)
-            row = dict(id=record_id,game=game,title_id='PC',category=category,
-                label=(label.strip() or source.name)[:150],notes=notes[:5000],region='PC',
+            title = next((part.upper() for part in (source.name, *(p.name for p in source.parents))
+                          if re.fullmatch(r'CUSA[0-9]{5}', part, re.I)), platform) if platform == 'PS4' else platform
+            row = dict(id=record_id,game=game,title_id=title,category=category,
+                label=(label.strip() or source.name)[:150],notes=notes[:5000],region=platform,
                 status='Unverified',file_hash=checksum,size_bytes=size,file_count=files,
                 source_folder=source.name,stored_path=str(dest.relative_to(self.root)),
-                metadata_json='{}',imported_at=now(),platform='PC',tags_json='[]')
+                metadata_json='{}',imported_at=now(),platform=platform,tags_json=json.dumps(['PS4'] if platform == 'PS4' else []))
             try:
                 self.conn.execute("""INSERT INTO saves (id,game,title_id,category,label,notes,region,status,
                     file_hash,size_bytes,file_count,source_folder,stored_path,metadata_json,imported_at,platform,tags_json)

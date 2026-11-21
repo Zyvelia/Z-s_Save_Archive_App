@@ -54,7 +54,7 @@ class SearchDialog(QDialog):
         self.setWindowTitle('Fast archive search');self.resize(850,630)
         layout=QVBoxLayout(self);top=QHBoxLayout();layout.addLayout(top)
         self.query=QLineEdit();self.query.setPlaceholderText('Search games, save labels, title IDs, notes, tags...');top.addWidget(self.query)
-        self.platform=QComboBox();self.platform.addItems(['All','PS3','PC']);top.addWidget(self.platform)
+        self.platform=QComboBox();self.platform.addItems(['All','PS3','PC','PS4']);top.addWidget(self.platform)
         self.category=QComboBox();self.category.addItems(['All','Legit','Modded','Unsorted']);top.addWidget(self.category)
         self.list=QListWidget();layout.addWidget(self.list)
         bottom=QHBoxLayout();layout.addLayout(bottom)

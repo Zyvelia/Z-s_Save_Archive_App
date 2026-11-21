@@ -31,7 +31,7 @@ class ArchiveV10(LibraryArchive):
         self.conn.commit()
 
     def create_profile(self,platform,game,name):
-        if platform not in ('PS3','PC'):raise ValueError('Unknown platform')
+        if platform not in ('PS3','PC','PS4'):raise ValueError('Unknown platform')
         name=_valid_name(name)
         if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
             raise ValueError('Game not in archive')
@@ -149,7 +149,7 @@ class ArchiveV10(LibraryArchive):
         if row is None:raise ValueError('Save not found')
         return ('Steam Cloud can overwrite a restored PC save or upload an older state. '
                 'Back up first; close the game and verify Steam synchronization status before restoring.' if row['platform']=='PC'
-                else 'Steam Cloud is not applicable to PS3 saves.')
+                else 'Steam Cloud applies only to PC saves.')
     def export_catalog(self,target):
         target=Path(target).expanduser().resolve()
         if target.suffix.lower()!='.html' or target.exists():raise ValueError('Choose a new .html output file')

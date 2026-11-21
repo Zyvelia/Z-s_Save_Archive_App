@@ -85,7 +85,7 @@ class AppDataDialog(QDialog):
 class Window(ExistingWindow):
     def __init__(self,root):
         super().__init__(root)
-        self.setWindowTitle("Z's Save Archive • v3.6.22")
+        self.setWindowTitle("Z's Save Archive • v3.6.23")
         self.resize(1540,930);self.setMinimumSize(1060,720)
         self.classic_content=self.takeCentralWidget()
         # All existing tools retain their QAction callbacks, even though the menu is hidden.
@@ -103,8 +103,11 @@ class Window(ExistingWindow):
         brand.setPixmap(pix.scaled(105,105,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
         sl.addWidget(brand)
         name=txt("Z's Save Archive",18);name.setAlignment(Qt.AlignmentFlag.AlignCenter);sl.addWidget(name)
-        sub=txt('PS3 & PC Save Manager',11,True);sub.setAlignment(Qt.AlignmentFlag.AlignCenter);sl.addWidget(sub)
+        sub=txt('PlayStation & PC Saves',11,True);sub.setAlignment(Qt.AlignmentFlag.AlignCenter);sl.addWidget(sub)
         sl.addSpacing(22)
+        self.ui_settings = AppPaths.discover()
+        self.hide_ps3 = self.ui_settings.load_settings().get('hide_ps3_tools') is True
+        self.ps3_widgets = []
         self.navbuttons={}
         routes=[('Dashboard',self.open_home),('Game Library',lambda:self.open_classic('games')),
                 ('Saves & Backups',lambda:self.open_section('Saves & Backups')),
@@ -125,19 +128,21 @@ class Window(ExistingWindow):
         for section in ('Saves & Backups','Save Editor','PS3 Tools','Releases','Settings'):
             self.section_pages[section]=self._make_section(section)
             self.shell_stack.addWidget(self.section_pages[section])
-        self.make_home();self.open_home()
+        self.make_home()
+        self.apply_ps3_visibility()
+        self.open_home()
 
     def make_home(self):
         body=QWidget();self.home.setWidget(body)
         vertical=QVBoxLayout(body);vertical.setContentsMargins(20,18,20,24);vertical.setSpacing(14)
         header=QHBoxLayout();titles=QVBoxLayout()
         title=txt("Welcome to Z's Save Archive",24);title.setObjectName('newTitle')
-        titles.addWidget(title);titles.addWidget(txt('Organize, inspect and back up your actual PS3 and PC saves.',12,True))
+        titles.addWidget(title);titles.addWidget(txt('Organize, inspect and back up PS3, PS4 and PC saves.',12,True))
         header.addLayout(titles,1)
         self.home_search=QLineEdit();self.home_search.setPlaceholderText('Search games and saves…');self.home_search.setMinimumWidth(230)
         self.home_search.textChanged.connect(self.update_home)
         header.addWidget(self.home_search)
-        self.platform_filter=QComboBox();self.platform_filter.addItems(['All Platforms','PS3','PC']);self.platform_filter.currentIndexChanged.connect(self.update_home)
+        self.platform_filter=QComboBox();self.platform_filter.addItems(['All Platforms','PS3','PC','PS4']);self.platform_filter.currentIndexChanged.connect(self.update_home)
         header.addWidget(self.platform_filter);vertical.addLayout(header)
         hero=QFrame();hero.setObjectName('newHero');hl=QHBoxLayout(hero)
         hl.addWidget(txt('ARCHIVE OVERVIEW',15))
@@ -150,10 +155,14 @@ class Window(ExistingWindow):
         info=QHBoxLayout();info.setSpacing(12)
         self.ps3_card,self.ps3_content=pane('PS3 SAVES')
         self.pc_card,self.pc_content=pane('PC SAVES')
+        self.ps4_card,ps4_content=pane('PS4 SAVES')
+        self.ps4_summary=txt('—',19)
+        ps4_content.addWidget(self.ps4_summary)
+        self.ps3_widgets.append(self.ps3_card)
         self.backup_card,self.backup_content=pane('BACKUP STATUS')
         self.ps3_summary=txt('—',19);self.pc_summary=txt('—',19);self.backup_summary=txt('—',16)
         self.ps3_content.addWidget(self.ps3_summary);self.pc_content.addWidget(self.pc_summary);self.backup_content.addWidget(self.backup_summary)
-        info.addWidget(self.ps3_card);info.addWidget(self.pc_card);info.addWidget(self.backup_card);vertical.addLayout(info)
+        info.addWidget(self.ps3_card);info.addWidget(self.ps4_card);info.addWidget(self.pc_card);info.addWidget(self.backup_card);vertical.addLayout(info)
         content=QHBoxLayout();content.setSpacing(12)
         left,left_layout=pane('GAME & SAVE LIBRARY')
         bar=QHBoxLayout();bar.addWidget(txt('Games in your archive',11,True));bar.addStretch()
@@ -170,20 +179,43 @@ class Window(ExistingWindow):
         console_layout.addWidget(txt('Connection status is not inferred automatically.',11,True))
         cb=QPushButton('Open PS3 connection tools');cb.clicked.connect(lambda:self.open_classic('ftp'));console_layout.addWidget(cb)
         right.addWidget(console)
+        self.ps3_widgets.append(console)
         recent,recent_layout=pane('RECENT ARCHIVED SAVES')
         self.recent_list=QListWidget();self.recent_list.setObjectName('newList');self.recent_list.setMinimumHeight(140)
         self.recent_list.itemClicked.connect(self.choose_recent)
         recent_layout.addWidget(self.recent_list);right.addWidget(recent)
         actions,action_layout=pane('QUICK TOOLS')
         grid=QGridLayout();grid.setSpacing(7)
-        quick=[('Import PS3',self.import_folder),('Import PC',self.import_pc),('Backups',lambda:self.open_section('Saves & Backups')),
+        quick=[('Import PS3',self.import_folder),('Import PC',self.import_pc),('Import PS4',self.import_ps4),('Backups',lambda:self.open_section('Saves & Backups')),
                ('Edit Save',self.editor_ui),('PS3 Transfer',lambda:self.open_classic('ftp')),('PS3 Tools',lambda:self.open_section('PS3 Tools'))]
         for i,(label,handler) in enumerate(quick):
             b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(handler);grid.addWidget(b,i//3,i%3)
+            if 'PS3' in label:self.ps3_widgets.append(b)
         action_layout.addLayout(grid);right.addWidget(actions)
         content.addLayout(right,2);vertical.addLayout(content)
-        vertical.addWidget(txt('This preview uses real local archive data. PS3 status is available through the existing connection tools; no fictitious connected console, storage, or backup health is displayed.',11,True))
         vertical.addStretch()
+
+    def set_ps3_visibility(self, hidden):
+        settings = self.ui_settings.load_settings()
+        settings['hide_ps3_tools'] = hidden
+        try:
+            self.ui_settings.save_settings(settings)
+        except OSError as exc:
+            QMessageBox.warning(self, 'Could not save settings', str(exc))
+            checkbox = self.sender()
+            if isinstance(checkbox, QCheckBox):
+                checkbox.blockSignals(True)
+                checkbox.setChecked(self.hide_ps3)
+                checkbox.blockSignals(False)
+            return
+        self.hide_ps3 = hidden
+        self.apply_ps3_visibility()
+
+    def apply_ps3_visibility(self):
+        for name in ('PS3 Console', 'PS3 Tools'):
+            self.navbuttons[name].setVisible(not self.hide_ps3)
+        for widget in self.ps3_widgets:
+            widget.setVisible(not self.hide_ps3)
 
     def _set_nav(self,name):
         for key,b in self.navbuttons.items():b.setChecked(key==name)
@@ -192,6 +224,8 @@ class Window(ExistingWindow):
         self.shell_stack.setCurrentIndex(0);self._set_nav('Dashboard');self.update_home()
 
     def open_classic(self,which):
+        if which == 'ftp' and self.hide_ps3:
+            return
         self.shell_stack.setCurrentIndex(1)
         mapping={'games':('Game Library',self.show_games),'saves':('Saves & Backups',self.show_saves),
                  'settings':('Settings',self.show_settings),'history':('Saves & Backups',self.show_history),
@@ -200,6 +234,10 @@ class Window(ExistingWindow):
             label,handler=mapping[which];self._set_nav(label);handler()
         elif which=='releases':
             self.open_section('Releases')
+
+    def import_ps4(self):
+        super().import_ps4()
+        self.update_home()
 
     def homebrew(self):
         from .ui_v24 import HomebrewCenter
@@ -223,7 +261,7 @@ class Window(ExistingWindow):
             row=QHBoxLayout()
             for label,fn in [('Browse Saves',lambda:self.open_classic('saves')),
                              ('Backup History',lambda:self.open_classic('history')),
-                             ('Import PC Save',self.import_pc)]:
+                             ('Import PS4 Save',self.import_ps4),('Import PC Save',self.import_pc)]:
                 b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(fn);row.addWidget(b)
             outer.addLayout(row)
         elif section=='Save Editor':
@@ -237,6 +275,10 @@ class Window(ExistingWindow):
         elif section=='Game Library':
             b=QPushButton('Back to Game Library');b.clicked.connect(lambda:self.open_classic('games'));outer.addWidget(b)
         elif section=='Settings':
+            hide_ps3 = QCheckBox('Hide PS3 tools and dashboard shortcuts')
+            hide_ps3.setChecked(self.hide_ps3)
+            hide_ps3.toggled.connect(self.set_ps3_visibility)
+            outer.addWidget(hide_ps3)
             b=QPushButton('Open Archive Settings');b.clicked.connect(lambda:self.open_classic('settings'));outer.addWidget(b)
             manager=QPushButton('AppData Storage Manager');manager.setObjectName('newAction');manager.clicked.connect(lambda:AppDataDialog(self).exec());outer.addWidget(manager)
         self._add_action_panel(section,outer)
@@ -259,6 +301,7 @@ class Window(ExistingWindow):
                 btn.setToolTip('Existing tool; uses the original application callback')
                 btn.clicked.connect(lambda _=False,a=action:a.trigger())
                 target.addWidget(btn)
+                if 'ps3' in name.casefold():self.ps3_widgets.append(btn)
         add_buttons(primary,layout)
         if advanced:
             toggle=QCheckBox('Show advanced / experimental actions')
@@ -273,6 +316,8 @@ class Window(ExistingWindow):
         outer.addWidget(panel)
 
     def open_section(self,section):
+        if section == 'PS3 Tools' and self.hide_ps3:
+            return
         if section not in self.section_pages:
             self.section_pages[section]=self._make_section(section)
             self.shell_stack.addWidget(self.section_pages[section])
@@ -300,6 +345,8 @@ class Window(ExistingWindow):
             npc=sum(1 for r in all_saves if r.get('platform')=='PC')
             self.ps3_summary.setText(f'{nps3:,} archived saves')
             self.pc_summary.setText(f'{npc:,} archived saves')
+            nps4=sum(1 for r in all_saves if r.get('platform')=='PS4')
+            self.ps4_summary.setText(f'{nps4:,} archived saves')
             self.backup_summary.setText(f"{stats.get('backups',0):,} recorded backups\nVerification not automated")
             platform=self.platform_filter.currentText();platform='All' if platform=='All Platforms' else platform
             query=self.home_search.text().strip()

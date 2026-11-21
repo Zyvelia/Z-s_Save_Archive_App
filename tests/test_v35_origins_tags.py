@@ -14,6 +14,18 @@ class OriginAndTagsTests(unittest.TestCase):
         self.source = self.root/'my-save.dat'
         self.source.write_bytes(b'one locally saved character')
         self.record = self.archive.import_pc_save(self.source, 'Example Game')
+    def test_ps4_import_preserves_title_platform_and_tag(self):
+        folder = self.root / 'CUSA12345'
+        folder.mkdir()
+        source = folder / 'slot.dat'
+        source.write_bytes(self.source.read_bytes())
+        row = self.archive.import_ps4_save(folder, 'PS4 Game')
+        self.assertEqual((row['platform'], row['title_id']), ('PS4', 'CUSA12345'))
+        saves = self.archive.list_saves(platform='PS4', tag='PS4')
+        self.assertEqual([save['id'] for save in saves], [row['id']])
+        self.assertEqual(self.archive.games(platform='PS4')[0]['title_id'], 'CUSA12345')
+        self.assertTrue(source.is_file())
+
     def tearDown(self):
         self.archive.close()
         self.temp.cleanup()
