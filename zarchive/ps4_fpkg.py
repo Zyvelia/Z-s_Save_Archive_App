@@ -23,6 +23,7 @@ MAX_SFO_BYTES = 1024 * 1024
 CONTENT_ID = re.compile(r'[A-Z]{2}[0-9]{4}-(CUSA[0-9]{5})_[0-9]{2}-[A-Z0-9_]{16}')
 VERSION = re.compile(r'[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}')
 PASSCODE = '0' * 32
+ABOUT_DIRECTORY = 'sce_sys/about'
 EXCLUDED = {'sce_sys/playgo-chunk.dat', 'sce_sys/playgo-chunk.sha',
             'sce_sys/playgo-manifest.xml', '.complete', '.dumping', 'dump.log'}
 
@@ -219,7 +220,8 @@ def write_existing_gp4(project, dump, destination, *, preserve_keystone, base_pa
         target = entry.get('targ_path', '').replace('\\', '/').casefold()
         if entry.tag != 'file' or target in included:
             raise ValueError(f'Invalid or duplicate GP4 file entry: {target}')
-        if target == 'sce_sys/keystone' and not preserve_keystone:
+        if (target == ABOUT_DIRECTORY or target.startswith(ABOUT_DIRECTORY + '/')
+                or (target == 'sce_sys/keystone' and not preserve_keystone)):
             listing.remove(entry)
             continue
         if target not in available:
@@ -255,6 +257,11 @@ def _payload(dump, preserve_keystone, cancelled):
     for directory, folders, names in os.walk(dump.path, onerror=fail):
         _check_cancelled(cancelled)
         path = Path(directory)
+        # The publishing tools create this directory during image generation.
+        folders[:] = [
+            name for name in folders
+            if (path / name).relative_to(dump.path).as_posix().casefold() != ABOUT_DIRECTORY
+        ]
         for name in sorted(folders + names):
             entry = path / name
             if _linked(entry):
@@ -265,7 +272,8 @@ def _payload(dump, preserve_keystone, cancelled):
             if entry.is_dir():
                 directories.add(relative.parts)
                 continue
-            if lower in EXCLUDED or (len(relative.parts) == 1 and lower.endswith('.gp4')):
+            if (lower == ABOUT_DIRECTORY or lower in EXCLUDED
+                    or (len(relative.parts) == 1 and lower.endswith('.gp4'))):
                 continue
             if lower == 'sce_sys/keystone' and not preserve_keystone:
                 continue
