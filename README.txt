@@ -24,11 +24,14 @@ Update and build
 ----------------
 
 Close the app, then run Update_Archive.bat from the extracted source folder.
-It verifies the source ZIP against SHA-256 and backs up changed files in
-.update-backups. It leaves local files that are absent from the new ZIP in
-place. Extract a fresh source ZIP if you want a clean project folder. In a
-Git checkout, use git pull. To upgrade from v3.6.16 or older, extract the
-latest source ZIP into a fresh folder so the bundled launcher is installed.
+Starting with v3.6.28, the updater downloads the current GitHub main commit,
+replaces modified app code, and removes obsolete files from app code folders.
+Replaced and removed files are backed up under .update-backups. Saves, settings,
+portable data, and custom editor definitions are preserved.
+
+If you're on an older source build, run Update_Archive.bat once to install the
+v3.6.28 bootstrap, then run it again to sync to main. For a Git checkout, manage
+local changes and updates through Git.
 
 On Windows, run Build_All.bat with Inno Setup 6 installed. Build_Windows.bat
 creates dist\ZSaveArchive\ZSaveArchive.exe. Build_Installer.bat creates the
