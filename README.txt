@@ -79,9 +79,12 @@ grouped by CUSA title ID and their matching archived save counts. Select
 the packages to build. For patches, select the matching base dump, or leave
 it unchecked and choose a previously built package in Existing base PKG.
 
-The app generates GP4 projects by default. To use an existing build project,
-select it in Existing GP4 and check its matching dump. The app resolves source
-files from that dump and leaves the original project in place.
+Scan dumps finds matching GP4 projects in each dump folder or its immediate
+parent within the selected input folder. The GP4 column shows which project
+each row will use. Check any number of games or patches and click Build selected.
+The app generates a GP4 if there is no unambiguous match. Use GP4 override to
+pick a different existing project for one selected dump. The app resolves source
+files from the dump and leaves the original project in place.
 
 Before building, the app checks for a usable base-game eboot.bin and warns
 if a requested keystone is missing. It checks the structure and identity of

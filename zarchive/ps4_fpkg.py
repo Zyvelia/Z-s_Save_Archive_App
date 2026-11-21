@@ -1,6 +1,7 @@
 """Local PS4 dump inspection, GP4 generation, and supervised package builds."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 import os
@@ -206,6 +207,50 @@ def read_existing_gp4(path):
     if category is None or not CONTENT_ID.fullmatch(content_id):
         raise ValueError('The GP4 does not identify a supported PS4 package.')
     return project, content_id, category
+
+
+def scan_build_inputs(source, cancelled=lambda: False):
+    dumps, errors = scan_dumps(source, cancelled)
+    root = long_path(source)
+    siblings = Counter((dump.path.parent, dump.content_id, dump.category) for dump in dumps)
+    projects = {}
+    notices = []
+    matches = {}
+
+    def nearby_projects(folder, content_id, category):
+        if folder not in projects:
+            projects[folder] = {}
+            try:
+                files = sorted(folder.iterdir())
+            except OSError as error:
+                notices.append(f'Could not look for GP4 files in {folder}: {error}')
+                files = []
+            for path in files:
+                _check_cancelled(cancelled)
+                if path.suffix.casefold() != '.gp4' or not path.is_file() or 'gp4fv' in path.stem.casefold():
+                    continue
+                try:
+                    _, project_id, project_category = read_existing_gp4(path)
+                except (OSError, ValueError) as error:
+                    notices.append(f'Ignoring {path}: {error}')
+                    continue
+                projects[folder].setdefault((project_id, project_category), []).append(path)
+        return projects[folder].get((content_id, category), [])
+
+    for dump in dumps:
+        _check_cancelled(cancelled)
+        parent = dump.path.parent
+        candidates = nearby_projects(dump.path, dump.content_id, dump.category)
+        if not candidates and (parent == root or root in parent.parents):
+            candidates = nearby_projects(parent, dump.content_id, dump.category)
+            if candidates and siblings[parent, dump.content_id, dump.category] > 1:
+                notices.append(f'{dump.path}: shared GP4 could match multiple dumps. A GP4 will be generated.')
+                continue
+        if len(candidates) == 1:
+            matches[dump.path] = candidates[0]
+        elif candidates:
+            notices.append(f'{dump.path}: multiple matching GP4 files. A GP4 will be generated unless you choose an override.')
+    return dumps, errors, matches, notices
 
 
 def write_existing_gp4(project, dump, destination, *, preserve_keystone, base_package, cancelled):
@@ -438,7 +483,7 @@ def run_orbis(tool, project, package, log, progress, cancelled):
 
 
 def build_packages(dumps, executable, output, *, preserve_keystone=True, storage_type='digital50',
-                   existing_base=None, existing_gp4=None,
+                   existing_base=None, existing_gp4=None, nearby_gp4s=None,
                    log=lambda _: None, progress=lambda _: None, cancelled=lambda: False, runner=None):
     if os.name != 'nt' and runner is None:
         raise OSError('Building FPKGs requires Windows.')
@@ -460,9 +505,10 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
     plan = build_plan(dumps, existing_base_id=existing_base_id)
     if not plan:
         raise ValueError('Select at least one dump to build.')
+    nearby_gp4s = nearby_gp4s or {}
     imported_dump = None
     if existing_gp4:
-        project, content_id, category = read_existing_gp4(existing_gp4)
+        override_project, content_id, category = read_existing_gp4(existing_gp4)
         matches = [dump for dump in dumps if (dump.content_id, dump.category) == (content_id, category)]
         if len(matches) != 1:
             raise ValueError('Select exactly one dump matching the existing GP4 content ID and package type.')
@@ -488,10 +534,23 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
             package = long_path(Path(scratch) / 'package.pkg')
             project_options = dict(preserve_keystone=preserve_keystone, cancelled=cancelled,
                                    base_package=base_packages.get(dump.title_id))
+            matched_gp4 = nearby_gp4s.get(dump.path)
             if dump == imported_dump:
                 log(f'Using existing GP4: {existing_gp4}')
-                write_existing_gp4(project, dump, project_path, **project_options)
-            else:
+                write_existing_gp4(override_project, dump, project_path, **project_options)
+            elif matched_gp4:
+                try:
+                    project, content_id, category = read_existing_gp4(matched_gp4)
+                    if (content_id, category) != (dump.content_id, dump.category):
+                        raise ValueError('The project no longer matches the scanned dump.')
+                    write_existing_gp4(project, dump, project_path, **project_options)
+                except ValueError as error:
+                    log(f'Could not use {matched_gp4}: {error} Generating a GP4.')
+                except FileNotFoundError:
+                    log(f'GP4 no longer exists: {matched_gp4}. Generating a GP4.')
+                else:
+                    log(f'Using existing GP4: {matched_gp4}')
+            if not project_path.exists():
                 write_gp4(dump, project_path, storage_type=storage_type, **project_options)
             invoke(tool, project_path, package, log, progress, cancelled)
             _check_cancelled(cancelled)
