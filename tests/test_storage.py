@@ -122,4 +122,72 @@ class Tests(unittest.TestCase):
         self.assertTrue(backup.is_file())
         self.assertEqual(output.read_bytes(), b'edited copy')
 
+    def test_recently_removed_preserves_metadata_attachments_and_pins(self):
+        archive = ArchiveV18(self.home / 'trash')
+        self.addCleanup(archive.close)
+        save = archive.import_save(self.source, label='Checkpoint', notes='Keep these notes')
+        record_id = save['id']
+        archive.set_tags(record_id, ['Boss'])
+        archive.pin_save(record_id)
+        backup = archive.make_backup(record_id)
+        screenshot = self.home / 'screenshot.png'
+        screenshot.write_bytes(b'screenshot')
+        attachment = archive.screenshot(record_id, screenshot)
+        stored = archive.root / save['stored_path']
+
+        self.assertEqual(archive.trash_saves([record_id, record_id]), 1)
+        self.assertEqual(archive.trash_saves([record_id]), 0)
+        self.assertEqual(archive.list_saves(), [])
+        self.assertEqual(archive.games(), [])
+        self.assertEqual(archive.pinned()['saves'], [])
+        self.assertEqual(archive.search_page()['total'], 0)
+        self.assertEqual(archive.universal_search('Checkpoint'), [])
+        removed, = archive.list_removed_saves()
+        self.assertEqual((removed['id'], removed['label']), (record_id, 'Checkpoint'))
+        self.assertTrue(stored.is_dir())
+
+        reopened = ArchiveV18(archive.root)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.restore_removed_saves([record_id]), 1)
+        self.assertEqual(reopened.restore_removed_saves([record_id]), 0)
+        restored, = reopened.list_saves()
+        self.assertEqual((restored['label'], restored['notes'], restored['tags']),
+                         ('Checkpoint', 'Keep these notes', ['Boss']))
+        self.assertEqual(reopened.pinned()['saves'][0]['id'], record_id)
+        self.assertEqual(len(reopened.backup_history(record_id)), 1)
+        self.assertEqual(len(reopened.screenshots(record_id)), 1)
+        self.assertEqual(reopened.list_removed_saves(), [])
+        self.assertTrue(backup.is_file() and attachment.is_file())
+
+    def test_recently_removed_restore_keeps_active_duplicate_and_is_atomic(self):
+        first = self.db.import_save(self.source)
+        other = self.db.import_pc_save(self.source, 'Second game')
+        self.db.trash_saves([first['id'], other['id']])
+        duplicate = self.db.import_save(self.source)
+        with self.assertRaisesRegex(ValueError, 'identical active save'):
+            self.db.restore_removed_saves([other['id'], first['id']])
+        self.assertEqual([row['id'] for row in self.db.list_saves()], [duplicate['id']])
+        self.assertEqual({row['id'] for row in self.db.list_removed_saves()}, {other['id'], first['id']})
+
+    def test_recently_removed_permanent_delete_never_applies_to_restored_save(self):
+        save = self.db.import_save(self.source)
+        record_id = save['id']
+        self.db.trash_saves([record_id])
+        self.db.restore_removed_saves([record_id])
+        self.assertEqual(self.db.remove_saves([record_id], only_removed=True), (0, []))
+        self.assertTrue((self.db.root / save['stored_path']).is_dir())
+        self.db.trash_saves([record_id])
+        self.assertEqual(self.db.remove_saves([record_id], only_removed=True), (1, []))
+        self.assertFalse((self.db.root / save['stored_path']).exists())
+        self.assertEqual(self.db.list_removed_saves(), [])
+        self.assertTrue((self.source / 'DATA.BIN').is_file())
+
+    def test_migrating_an_existing_archive_leaves_its_saves_active(self):
+        save = self.db.import_save(self.source)
+        self.db.conn.executescript('DROP VIEW temp.active_saves; ALTER TABLE saves DROP COLUMN removed_at;')
+        reopened = Archive(self.db.root)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.list_saves()[0]['id'], save['id'])
+        self.assertEqual(reopened.list_removed_saves(), [])
+
 if __name__=='__main__':unittest.main()

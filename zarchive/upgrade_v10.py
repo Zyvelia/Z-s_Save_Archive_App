@@ -33,7 +33,7 @@ class ArchiveV10(LibraryArchive):
     def create_profile(self,platform,game,name):
         if platform not in ('PS3','PC','PS4'):raise ValueError('Unknown platform')
         name=_valid_name(name)
-        if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE platform=? AND game=?',(platform,game)).fetchone():
             raise ValueError('Game not in archive')
         pid=uuid.uuid4().hex
         self.conn.execute('INSERT INTO save_profiles VALUES (?,?,?,?)',(pid,platform,game,name));self.conn.commit()
@@ -44,7 +44,7 @@ class ArchiveV10(LibraryArchive):
         if game:query+=' AND game=?';args.append(game)
         return [dict(r) for r in self.conn.execute(query+' ORDER BY name COLLATE NOCASE',args)]
     def assign_profile(self,save_id,profile_id):
-        row=self.conn.execute('SELECT platform,game FROM saves WHERE id=?',(save_id,)).fetchone()
+        row=self.conn.execute('SELECT platform,game FROM active_saves WHERE id=?',(save_id,)).fetchone()
         if row is None:raise ValueError('Save not found')
         if profile_id is not None:
             profile=self.conn.execute('SELECT * FROM save_profiles WHERE id=?',(profile_id,)).fetchone()
@@ -56,17 +56,17 @@ class ArchiveV10(LibraryArchive):
         row=self.conn.execute('SELECT p.* FROM save_profiles p JOIN save_profile_links l ON l.profile_id=p.id WHERE l.save_id=?',(save_id,)).fetchone()
         return dict(row) if row else None
     def pin_save(self,save_id,pin=True):
-        if not self.conn.execute('SELECT 1 FROM saves WHERE id=?',(save_id,)).fetchone():raise ValueError('Save not found')
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE id=?',(save_id,)).fetchone():raise ValueError('Save not found')
         if pin:self.conn.execute('INSERT OR IGNORE INTO pinned_saves VALUES (?)',(save_id,))
         else:self.conn.execute('DELETE FROM pinned_saves WHERE save_id=?',(save_id,))
         self.conn.commit()
     def pin_game(self,platform,game,pin=True):
-        if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():raise ValueError('Game not found')
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE platform=? AND game=?',(platform,game)).fetchone():raise ValueError('Game not found')
         if pin:self.conn.execute('INSERT OR IGNORE INTO pinned_games VALUES (?,?)',(platform,game))
         else:self.conn.execute('DELETE FROM pinned_games WHERE platform=? AND game=?',(platform,game))
         self.conn.commit()
     def pinned(self):
-        return {'saves':[dict(r) for r in self.conn.execute('SELECT s.* FROM saves s JOIN pinned_saves p ON p.save_id=s.id ORDER BY s.imported_at DESC')],
+        return {'saves':[dict(r) for r in self.conn.execute('SELECT s.* FROM active_saves s JOIN pinned_saves p ON p.save_id=s.id ORDER BY s.imported_at DESC')],
                 'games':[dict(r) for r in self.conn.execute('SELECT * FROM pinned_games ORDER BY game COLLATE NOCASE')]}
     def log_recovery(self,operation,target,error):
         self.conn.execute('INSERT INTO recovery_events VALUES (?,?,?,?,?)',(uuid.uuid4().hex,_utc(),_valid_name(operation),str(target)[:300],str(error)[:1000]))
@@ -116,7 +116,7 @@ class ArchiveV10(LibraryArchive):
         with socket.create_connection((row['host'],row['port']),timeout=timeout):pass
         return True
     def compatibility(self,save_id,*,title_id='',region='',game_version='',dlc_notes=''):
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(save_id,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(save_id,)).fetchone()
         if row is None:raise ValueError('Save not found')
         warnings=[];meta=json.loads(row['metadata_json'] or '{}')
         if row['platform']=='PS3':
@@ -131,7 +131,7 @@ class ArchiveV10(LibraryArchive):
         return {'save_id':save_id,'platform':row['platform'],'title_id':row['title_id'],
                 'region':row['region'],'metadata':meta,'warnings':warnings}
     def privacy_audit(self,save_id):
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(save_id,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(save_id,)).fetchone()
         if row is None:raise ValueError('Save not found')
         folder=(self.root/row['stored_path']).resolve()
         if not folder.is_relative_to(self.data_dir.resolve()):raise ValueError('Unsafe save path')
@@ -145,7 +145,7 @@ class ArchiveV10(LibraryArchive):
         if row['platform']=='PC':warnings.append('PC saves may contain names, account IDs or tokens inside binary data; not scanned')
         return warnings
     def steam_cloud_advice(self,save_id):
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(save_id,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(save_id,)).fetchone()
         if row is None:raise ValueError('Save not found')
         return ('Steam Cloud can overwrite a restored PC save or upload an older state. '
                 'Back up first; close the game and verify Steam synchronization status before restoring.' if row['platform']=='PC'

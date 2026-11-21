@@ -279,6 +279,7 @@ class Window(ExistingWindow):
         if section=='Saves & Backups':
             row=QHBoxLayout()
             for label,fn in [('Browse Saves',lambda:self.open_classic('saves')),
+                             ('Recently Removed',self.show_recently_removed),
                              ('Import PS4 Save',self.import_ps4),('Import PC Save',self.import_pc)]:
                 b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(fn);row.addWidget(b)
             outer.addLayout(row)

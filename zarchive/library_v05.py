@@ -22,7 +22,7 @@ class LibraryArchive(EnhancedArchive):
 
     def add_cover(self,platform,game,source):
         if platform not in ('PS3','PC','PS4'):raise ValueError('Invalid platform')
-        if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE platform=? AND game=?',(platform,game)).fetchone():
             raise ValueError('Game not in archive')
         source=Path(source)
         if source.is_symlink() or not source.is_file() or source.suffix.lower() not in VALID_IMAGE_EXT:

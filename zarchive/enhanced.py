@@ -29,7 +29,7 @@ class EnhancedArchive(Archive):
 
     def set_visibility(self,save_id,visibility):
         if visibility not in ('Private','Public'): raise ValueError('Unknown visibility')
-        cursor=self.conn.execute('UPDATE saves SET visibility=? WHERE id=?',(visibility,save_id))
+        cursor=self.conn.execute('UPDATE saves SET visibility=? WHERE id=? AND removed_at IS NULL',(visibility,save_id))
         if not cursor.rowcount: raise ValueError('Save not found')
         self.conn.commit()
 
@@ -58,12 +58,12 @@ class EnhancedArchive(Archive):
             if t and t.casefold() not in [x.casefold() for x in clean]:clean.append(t)
         if len(clean)>24:raise ValueError('Max 24 tags')
         for sid in set(ids):
-            r=self.conn.execute('SELECT tags_json FROM saves WHERE id=?',(sid,)).fetchone()
+            r=self.conn.execute('SELECT tags_json FROM active_saves WHERE id=?',(sid,)).fetchone()
             if r is None:continue
             existing=json.loads(r['tags_json'] or '[]')
             merged=existing+[t for t in clean if t.casefold() not in [x.casefold() for x in existing]]
             if len(merged)>24:raise ValueError('More than 24 tags for a save')
-            self.conn.execute('UPDATE saves SET tags_json=? WHERE id=?',(json.dumps(merged),sid))
+            self.conn.execute('UPDATE saves SET tags_json=? WHERE id=? AND removed_at IS NULL',(json.dumps(merged),sid))
         self.conn.commit()
 
     def create_collection(self,name):
@@ -78,7 +78,7 @@ class EnhancedArchive(Archive):
 
     def add_to_collection(self,cid,platform,game):
         if not self.conn.execute('SELECT 1 FROM collections WHERE id=?',(cid,)).fetchone():raise ValueError('Collection missing')
-        if not self.conn.execute('SELECT 1 FROM saves WHERE platform=? AND game=?',(platform,game)).fetchone():raise ValueError('Game not in archive')
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE platform=? AND game=?',(platform,game)).fetchone():raise ValueError('Game not in archive')
         self.conn.execute('INSERT OR IGNORE INTO collection_games VALUES (?,?,?)',(cid,platform,game));self.conn.commit()
 
     def collection_games(self,cid):
@@ -170,7 +170,7 @@ class EnhancedArchive(Archive):
         path=Path(path)
         if path.is_symlink() or path.suffix.lower() not in ('.jpg','.jpeg','.png','.webp') or path.stat().st_size>12*1024*1024:
             raise ValueError('Use a PNG/JPEG/WebP image under 12 MiB')
-        if not self.conn.execute('SELECT 1 FROM saves WHERE id=?',(save_id,)).fetchone():raise ValueError('Save not found')
+        if not self.conn.execute('SELECT 1 FROM active_saves WHERE id=?',(save_id,)).fetchone():raise ValueError('Save not found')
         uid=uuid.uuid4().hex;dest=self.images_dir/(uid+path.suffix.lower())
         shutil.copy2(path,dest)
         self.conn.execute('INSERT INTO screenshots VALUES (?,?,?)',(uid,save_id,str(dest.relative_to(self.root))))
@@ -180,7 +180,7 @@ class EnhancedArchive(Archive):
         return [dict(r) for r in self.conn.execute('SELECT * FROM screenshots WHERE save_id=?',(save_id,))]
 
     def export_release(self,save_id,target):
-        row=self.conn.execute('SELECT * FROM saves WHERE id=?',(save_id,)).fetchone()
+        row=self.conn.execute('SELECT * FROM active_saves WHERE id=?',(save_id,)).fetchone()
         if row is None:raise ValueError('Save not found')
         if row['visibility']!='Public':raise ValueError('Mark save Public before release export')
         if row['status']!='Verified':raise ValueError('Verify the save before releasing')
@@ -188,7 +188,7 @@ class EnhancedArchive(Archive):
 
     def dashboard(self):
         stats=self.stats()
-        storage=sum(r['size_bytes'] for r in self.conn.execute('SELECT size_bytes FROM saves'))
+        storage=sum(r['size_bytes'] for r in self.conn.execute('SELECT size_bytes FROM active_saves'))
         return {'games':stats[0],'saves':stats[1],'verified':stats[2],'bytes':storage,'backups':len(self.backup_history())}
 
 
