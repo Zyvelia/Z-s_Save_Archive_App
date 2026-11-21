@@ -27,7 +27,8 @@ Close the app, then run Update_Archive.bat from the extracted source folder.
 It verifies the source ZIP against SHA-256 and backs up changed files in
 .update-backups. It leaves local files that are absent from the new ZIP in
 place. Extract a fresh source ZIP if you want a clean project folder. In a
-Git checkout, use git pull.
+Git checkout, use git pull. To upgrade from v3.6.16 or older, extract the
+latest source ZIP into a fresh folder so the bundled launcher is installed.
 
 On Windows, run Build_All.bat with Inno Setup 6 installed. Build_Windows.bat
 creates dist\ZSaveArchive\ZSaveArchive.exe. Build_Installer.bat creates the
@@ -39,10 +40,11 @@ Run python -m unittest discover -s tests -q to check the source.
 PS3 tools
 ---------
 
-- Retail2Pkg ISO Launcher v3. In PS3 Tools, select the launcher ZIP and click
-  Open Retail2Pkg launcher. Its Windows dialogs ask for the ISO and output
-  folder. It mounts the ISO read-only, stages PS3_GAME, and opens the package
-  folder after a successful build. Some games require an online update.
+- Retail2Pkg ISO Launcher v3. Open it under PS3 Tools. Save Archive bundles
+  the toolkit. Pick the ISO and output folder in Save Archive and start the
+  build. Windows mounts the ISO read-only and copies PS3_GAME. The in-app
+  log shows conversion and patch downloads. Open output folder shows the
+  resulting packages. Some games require an online update.
 - ISO to XMB Assistant. Choose CFW2OFW Helper and a workspace parent, then
   select a readable PS3 ISO or an extracted PS3_GAME. Each run gets its own
   folder. Use Workspace history to inspect earlier runs or copy a

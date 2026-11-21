@@ -1,4 +1,4 @@
-"""Run the user-selected Retail2Pkg ISO Launcher v3 on Windows."""
+"""Use the bundled Retail2Pkg v3 workflow with paths selected in Save Archive."""
 from __future__ import annotations
 
 import hashlib
@@ -7,8 +7,15 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
+from time import monotonic
+from types import SimpleNamespace
+import uuid
 from zipfile import ZipFile
+
+from .app_assets import asset_path
+from .converter_output_v21 import validate_pkg
+from .iso_converter_v20 import inspect_game
+from .windows_iso import copy_iso_game
 
 LAUNCHER_FOLDER = 'Retail2Pkg ISO Launcher'
 SCRIPT_HASHES = {
@@ -23,8 +30,8 @@ TOOL_FILES = (
 )
 
 
-def extract_launcher(archive_path: Path, destination: Path) -> None:
-    """Stage the known launcher scripts and the companion files they need."""
+def extract_toolkit(archive_path: Path, destination: Path) -> None:
+    """Stage the bundled batch and companion files in the work folder."""
     required = (*SCRIPT_HASHES, *(f'Retail2Pkg/{name}' for name in TOOL_FILES))
     optional = 'Retail2Pkg/MSVCR120.dll'
     with ZipFile(archive_path) as archive:
@@ -43,26 +50,142 @@ def extract_launcher(archive_path: Path, destination: Path) -> None:
             script = archive.read(members[name]).replace(b'\r\n', b'\n')
             if hashlib.sha256(script).hexdigest() != expected:
                 raise ValueError(f'{name} differs from the supported Retail2Pkg ISO Launcher v3 script.')
-        (destination / 'Retail2Pkg').mkdir()
         for name, entry in members.items():
-            with archive.open(entry) as source, (destination / name).open('xb') as target:
+            if not name.startswith('Retail2Pkg/'):
+                continue
+            with archive.open(entry) as source, (destination / Path(name).name).open('xb') as target:
                 shutil.copyfileobj(source, target)
 
 
-def run_launcher(archive_path: str | Path, *, runner=None) -> None:
+def stream_batch_log(process, log_path: Path, timeout: int, *, progress, console_status, encoding):
+    """Read complete console lines and render the current line's backspaces."""
+    deadline = monotonic() + timeout
+    line = []
+    cursor = 0
+    previous_status = ''
+    tail = ''
+    with log_path.open(encoding=encoding, errors='replace', newline='') as reader:
+        while True:
+            try:
+                exit_code = process.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                exit_code = None
+                if monotonic() >= deadline:
+                    process.kill()
+                    process.wait()
+                    raise TimeoutError('Retail2Pkg did not finish within the build timeout.')
+            lines = []
+            while chunk := reader.read(65536):
+                for character in chunk:
+                    if character == '\n':
+                        lines.append(''.join(line))
+                        line.clear()
+                        cursor = 0
+                    elif character == '\r':
+                        cursor = 0
+                    elif character == '\b':
+                        cursor = max(0, cursor - 1)
+                    elif cursor < len(line):
+                        line[cursor] = character
+                        cursor += 1
+                    else:
+                        line.append(character)
+                        cursor += 1
+            status = ''.join(line).rstrip()
+            if exit_code is not None and status:
+                lines.append(status)
+                status = ''
+            if lines:
+                text = '\n'.join(lines)
+                tail = (tail + text + '\n')[-30000:]
+                if progress is not None:
+                    progress(text)
+            if status != previous_status and console_status is not None:
+                console_status(status)
+            previous_status = status
+            if exit_code is not None:
+                return SimpleNamespace(returncode=exit_code, stdout=tail, stderr='')
+
+
+def run_windows_batch(stage, timeout, progress, console_status):
+    system_root = Path(os.environ.get('SystemRoot', r'C:\Windows'))
+    log_name = 'Retail2Pkg.log'
+    log_path = stage / log_name
+    log_path.touch(exist_ok=False)
+    launch_line = (r'title Retail2Pkg - Save Archive & echo See Save Archive for the live log.'
+                   rf' & call .\Retail2Pkg.bat /launcher > {log_name} 2>&1')
+    command = [str(system_root / 'System32' / 'cmd.exe'), '/d', '/v:off', '/s', '/c', launch_line]
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE, available for interactive key prompts.
+    with subprocess.Popen(command, cwd=stage, startupinfo=startup,
+                          creationflags=subprocess.CREATE_NEW_CONSOLE) as process:
+        try:
+            return stream_batch_log(process, log_path, timeout, progress=progress,
+                                    console_status=console_status, encoding='oem')
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            raise
+
+
+def find_packages(stage: Path) -> list[Path]:
+    for folder in sorted(stage.iterdir()):
+        if not folder.is_dir() or folder.is_symlink() or not folder.name.upper().startswith(('BL', 'BC')):
+            continue
+        game = folder / f'{folder.name}.pkg'
+        update = folder / f'{folder.name}_-_Update.pkg'
+        if not (game.is_file() and update.is_file()):
+            continue
+        packages = [game, update]
+        fix = folder / f'{folder.name}_-_Fix.pkg'
+        if fix.is_file():
+            packages.append(fix)
+        for package in packages:
+            validate_pkg(stage, package)
+        return packages
+    raise ValueError('Retail2Pkg did not leave both the game and update PKGs.')
+
+
+def build_pkgs_locally(iso_path, output_folder, *, progress=None, extraction_progress=None,
+                       console_status=None, runner=None, timeout=7200):
     if sys.platform != 'win32' and runner is None:
-        raise OSError('Retail2Pkg ISO Launcher requires Windows 10 or 11.')
-    package = Path(archive_path).expanduser().resolve(strict=True)
-    if not package.is_file() or package.suffix.lower() != '.zip':
-        raise ValueError('Select the Retail2Pkg ISO Launcher v3 ZIP.')
-    cmd = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'cmd.exe'
-    with TemporaryDirectory(prefix='save-archive-retail2pkg-') as temporary:
-        staging = Path(temporary)
-        extract_launcher(package, staging)
-        # Keep the original console and file dialogs, including the final pause.
-        launch = runner or subprocess.run
-        result = launch([str(cmd), '/d', '/c', r'.\Start.cmd'], cwd=staging,
-                        creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0), check=False)
+        raise OSError('Retail2Pkg requires Windows 10 or 11.')
+    if progress:
+        progress(f'Checking ISO: {iso_path}')
+    iso = Path(iso_path).expanduser().resolve(strict=True)
+    if not iso.is_file() or iso.suffix.lower() != '.iso':
+        raise ValueError('Select an existing PS3 disc ISO.')
+    if progress:
+        progress(f'Checking output folder: {output_folder}')
+    output = Path(output_folder).expanduser().resolve(strict=True)
+    if not output.is_dir() or str(output).startswith('\\\\'):
+        raise ValueError('Choose an existing output folder on a local drive.')
+
+    stage = output / ('Retail2Pkg_' + uuid.uuid4().hex[:8])
+    if progress:
+        progress(f'Working folder: {stage}')
+    stage.mkdir()
+    try:
+        extract_toolkit(asset_path('Retail2Pkg_ISO_Launcher_v3.zip'), stage)
+        if runner is None:
+            system_root = Path(os.environ.get('SystemRoot', r'C:\Windows'))
+            x86_system = system_root / 'SysWOW64'
+            if not x86_system.is_dir():
+                x86_system = system_root / 'System32'
+            if not any((folder / 'MSVCR120.dll').is_file() for folder in (x86_system, stage)):
+                raise RuntimeError('Install the Microsoft Visual C++ 2013 Redistributable (x86) to supply MSVCR120.dll.')
+        game = stage / 'PS3_GAME'
+        copy_iso_game(iso, game, progress=progress, extraction_progress=extraction_progress)
+        info = inspect_game(game)
+        if progress:
+            progress(f"Found {info['title']} [{info['title_id']}]. Starting Retail2Pkg.bat.")
+            progress('If PS3Merge opens, select the working folder printed above. If a key is requested, open Retail2Pkg from the taskbar.')
+        invoke = runner or run_windows_batch
+        result = invoke(stage, timeout, progress, console_status)
         if result.returncode:
-            raise RuntimeError(f'Retail2Pkg ISO Launcher exited with code {result.returncode}. '
-                               'Its console displays the conversion error before closing.')
+            raise RuntimeError(f'Retail2Pkg exited with code {result.returncode}. Check the build log.')
+        packages = find_packages(stage)
+        return {'packages': [str(path) for path in packages], 'folder': str(packages[0].parent)}
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f'{exc}\nWorking folder: {stage}') from exc

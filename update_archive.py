@@ -16,6 +16,7 @@ VERSION = re.compile(r'^#define AppVersion "(\d+\.\d+(?:\.\d+)?)"$', re.MULTILIN
 SOURCE_DIRS = {"assets", "editor_definitions", "tests", "zarchive"}
 ROOT_SUFFIXES = {".bat", ".html", ".iss", ".md", ".py", ".txt"}
 SOURCE_SUFFIXES = {".ico", ".json", ".png", ".py"}
+BUNDLED_LAUNCHER = PurePosixPath("assets/Retail2Pkg_ISO_Launcher_v3.zip")
 
 
 def version_at(folder):
@@ -60,7 +61,7 @@ def source_paths(archive):
         if len(path.parts) == 1:
             allowed = path.suffix in ROOT_SUFFIXES or path.name == ".gitignore"
         else:
-            allowed = path.parts[0] in SOURCE_DIRS and path.suffix in SOURCE_SUFFIXES
+            allowed = path == BUNDLED_LAUNCHER or (path.parts[0] in SOURCE_DIRS and path.suffix in SOURCE_SUFFIXES)
         if not allowed or member.filename.lower() in seen:
             raise ValueError(f"Unexpected or duplicate ZIP entry: {member.filename}")
         seen.add(member.filename.lower())

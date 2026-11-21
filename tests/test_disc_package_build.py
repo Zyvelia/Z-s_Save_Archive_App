@@ -1,4 +1,4 @@
-import hashlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,7 +9,8 @@ from zipfile import ZipFile
 
 from test_v20 import write_sfo
 from zarchive.iso_converter_v20 import extract_iso, stage_conversion
-from zarchive.retail2pkg_v31 import LAUNCHER_FOLDER, TOOL_FILES, run_launcher
+from zarchive.app_assets import asset_path
+from zarchive.retail2pkg_v31 import build_pkgs_locally, stream_batch_log
 
 
 class DiscPackageBuildTests(unittest.TestCase):
@@ -57,28 +58,56 @@ class DiscPackageBuildTests(unittest.TestCase):
                 stage_conversion(iso, helper, stage, extractor=winrar)
             self.assertTrue((stage / 'PS3_GAME' / 'PARAM.SFO').is_file())
 
-    def test_launches_start_cmd_with_unmodified_scripts_and_companions(self):
-        scripts = {'Start.cmd': b'@echo off\r\n', 'Launch.ps1': b'Write-Host launcher\r\n'}
-        hashes = {name: hashlib.sha256(data.replace(b'\r\n', b'\n')).hexdigest()
-                  for name, data in scripts.items()}
+    def test_build_runs_the_bundled_batch_on_the_windows_iso_copy(self):
         with tempfile.TemporaryDirectory() as scratch:
-            package = Path(scratch) / 'Launcher v3.zip'
-            with ZipFile(package, 'w') as archive:
-                for name, data in scripts.items():
-                    archive.writestr(f'{LAUNCHER_FOLDER}/{name}', data)
-                for name in TOOL_FILES:
-                    archive.writestr(f'{LAUNCHER_FOLDER}/Retail2Pkg/{name}', name.encode())
-                archive.writestr('../outside.cmd', b'not part of the launcher')
+            root = Path(scratch)
+            iso = root / 'disc.iso'
+            iso.touch()
+            output = root / 'Local output & packages'
+            output.mkdir()
+            messages, percentages = [], []
 
-            def run(command, *, cwd, **kwargs):
-                self.assertEqual(command[-3:], ['/d', '/c', r'.\Start.cmd'])
-                for name, data in scripts.items():
-                    self.assertEqual((cwd / name).read_bytes(), data)
-                self.assertEqual((cwd / 'Retail2Pkg' / 'Retail2Pkg.bat').read_bytes(), b'Retail2Pkg.bat')
-                self.assertFalse((cwd / 'outside.cmd').exists())
+            def copy(source, destination, *, progress, extraction_progress):
+                self.assertEqual(source, iso)
+                destination.mkdir()
+                write_sfo(destination / 'PARAM.SFO')
+                extraction_progress(0)
+                extraction_progress(100)
+
+            def batch(stage, timeout, progress, console_status):
+                self.assertEqual(stage.parent, output)
+                self.assertTrue((stage / 'PS3_GAME' / 'PARAM.SFO').is_file())
+                with ZipFile(asset_path('Retail2Pkg_ISO_Launcher_v3.zip')) as archive:
+                    self.assertEqual((stage / 'Retail2Pkg.bat').read_bytes(),
+                                     archive.read('Retail2Pkg ISO Launcher/Retail2Pkg/Retail2Pkg.bat'))
+                packages = stage / 'BLUS30982'
+                packages.mkdir()
+                for suffix in ('', '_-_Update'):
+                    (packages / f'BLUS30982{suffix}.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
                 return SimpleNamespace(returncode=0)
 
-            with patch('zarchive.retail2pkg_v31.SCRIPT_HASHES', hashes):
-                run_launcher(package, runner=run)
-            with self.assertRaisesRegex(ValueError, 'differs from the supported'):
-                run_launcher(package, runner=self.fail)
+            with patch('zarchive.retail2pkg_v31.copy_iso_game', side_effect=copy):
+                result = build_pkgs_locally(iso, output, runner=batch, progress=messages.append,
+                                            extraction_progress=percentages.append)
+            self.assertEqual(percentages, [0, 100])
+            self.assertEqual(len(result['packages']), 2)
+            self.assertEqual(Path(result['folder']).name, 'BLUS30982')
+            self.assertTrue(all(Path(pkg).is_file() for pkg in result['packages']))
+
+    def test_batch_streams_carriage_and_backspace_progress(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / 'batch.log'
+            messages, statuses = [], []
+            child = (
+                "import sys, time; "
+                "sys.stdout.write('Patch.pkg ... 21%\\b\\b\\b'); "
+                "sys.stdout.flush(); time.sleep(0.8); print('done', flush=True)"
+            )
+            with log.open('wb') as output, subprocess.Popen(
+                [sys.executable, '-u', '-c', child], stdout=output
+            ) as process:
+                result = stream_batch_log(process, log, 10, progress=messages.append,
+                                          console_status=statuses.append, encoding='utf-8')
+            self.assertEqual(result.returncode, 0)
+            self.assertIn('Patch.pkg ... 21%', statuses)
+            self.assertEqual(messages, ['Patch.pkg ... done'])

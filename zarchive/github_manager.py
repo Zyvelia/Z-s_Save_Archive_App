@@ -72,6 +72,7 @@ def _source_files(root: Path):
             else:
                 allowed = not name.startswith('.') and (
                     path.suffix.lower() in SOURCE_TREES[relative.parts[0]] or name == 'Makefile'
+                    or (relative == Path('assets') and name == 'Retail2Pkg_ISO_Launcher_v3.zip')
                 )
             if allowed:
                 if _linked(path) or not path.is_file():

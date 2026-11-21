@@ -3,7 +3,7 @@ from __future__ import annotations
 import os, sys
 from time import monotonic
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal, QUrl, Qt
+from PySide6.QtCore import QThread, Signal, QUrl, Qt, QStandardPaths
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
     QPushButton,QFileDialog,QMessageBox,QFormLayout,QPlainTextEdit,QTreeWidget,QTreeWidgetItem,QProgressBar)
@@ -12,7 +12,7 @@ from .ui_v04 import STYLE
 from .editor_v18 import ArchiveV18
 from .converter_output_v21 import (inspect_conversion_output,upload_pkg_ftp,validate_pkg)
 from .workspace_history import workspace_history
-from .retail2pkg_v31 import run_launcher
+from .retail2pkg_v31 import build_pkgs_locally
 from .console_v27 import summarize_transfer
 
 class TaskWorker(QThread):
@@ -25,64 +25,166 @@ class TaskWorker(QThread):
         try:self.done.emit(self.fn(*self.args,**self.kwargs))
         except Exception as e:self.error.emit(str(e))
 
+class DiscPackageWorker(TaskWorker):
+    message = Signal(str)
+    extraction_percent = Signal(int)
+    console_status = Signal(str)
+
+    def __init__(self, iso, output):
+        super().__init__(build_pkgs_locally, iso, output)
+        self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit,
+                           console_status=self.console_status.emit)
+
+
 class DiscPackageDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Retail2Pkg ISO Launcher v3')
-        self.resize(620, 180)
+        self.setWindowTitle('Retail2Pkg ISO Launcher')
+        self.resize(840, 540)
         self.worker = None
+        self.output_path = None
         layout = QVBoxLayout(self)
-        instructions = QLabel('Choose your Retail2Pkg ISO Launcher v3 ZIP. The launcher opens its own '
-                              'ISO and output-folder pickers and shows progress in its console.')
-        instructions.setWordWrap(True)
-        layout.addWidget(instructions)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+        title = QLabel('Build PS3 packages')
+        title.setStyleSheet('font-size: 22px; font-weight: 700;')
+        layout.addWidget(title)
+        form = QFormLayout()
+        layout.addLayout(form)
 
-        row = QHBoxLayout()
-        self.archive = QLineEdit()
-        browse = QPushButton('Browse ZIP…')
-        browse.clicked.connect(self.choose_archive)
-        row.addWidget(self.archive, 1)
-        row.addWidget(browse)
-        layout.addLayout(row)
+        def add(label, *choices):
+            field = QLineEdit()
+            row = QHBoxLayout()
+            row.addWidget(field, 1)
+            for caption, choose in choices:
+                button = QPushButton(caption)
+                button.clicked.connect(lambda _, picker=choose: self.choose_path(field, picker))
+                row.addWidget(button)
+            form.addRow(label, row)
+            return field
 
-        self.status = QLabel()
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        self.iso = add('PS3 disc ISO', ('Find ISO…', lambda: self.pick_path(False)))
+        self.iso.setPlaceholderText('Choose a readable PS3 disc image')
+        self.output = add('Save packages to', ('Choose folder…', lambda: self.pick_path(True)))
+        self.output.setPlaceholderText('Choose a folder on a local drive')
+        self.iso.textChanged.connect(self.update_build_button)
+        self.output.textChanged.connect(self.update_build_button)
+        self.extraction = QProgressBar()
+        self.extraction.setFormat('Ready to extract ISO')
+        self.extraction.setValue(0)
+        layout.addWidget(self.extraction)
+        self.batch_status = QLabel()
+        self.batch_status.setWordWrap(True)
+        self.batch_status.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.batch_status)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.log.setMaximumBlockCount(5000)
+        self.log.setPlaceholderText('Mount, copy, patch download, and package output appear here.')
+        self.log.setStyleSheet(
+            'QPlainTextEdit { background: #10101a; color: #e1dcee; '
+            'border: 1px solid #3b3351; border-radius: 9px; padding: 10px; '
+            'font-family: Consolas, monospace; font-size: 12px; }'
+        )
+        layout.addWidget(QLabel('Build log'))
+        layout.addWidget(self.log, 1)
 
         buttons = QHBoxLayout()
-        self.launch_button = QPushButton('Open Retail2Pkg launcher')
-        self.launch_button.clicked.connect(self.start_launcher)
+        layout.addLayout(buttons)
+        self.build_button = QPushButton('Build packages')
+        self.build_button.setEnabled(False)
+        self.build_button.setDefault(True)
+        self.build_button.clicked.connect(self.start_build)
+        self.output_button = QPushButton('Open output folder')
+        self.output_button.setEnabled(False)
+        self.output_button.clicked.connect(self.open_output)
         close = QPushButton('Close')
         close.clicked.connect(self.close)
-        buttons.addWidget(self.launch_button)
-        buttons.addWidget(close)
-        layout.addLayout(buttons)
+        for button in (self.build_button, self.output_button, close):
+            buttons.addWidget(button)
 
-    def choose_archive(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Choose Retail2Pkg ISO Launcher v3', '', 'ZIP archives (*.zip)')
+    def choose_path(self, field, picker):
+        path = picker()
         if path:
-            self.archive.setText(path)
+            field.setText(path)
 
-    def start_launcher(self):
-        archive = self.archive.text().strip()
-        if not archive:
-            self.choose_archive()
-            archive = self.archive.text().strip()
-        if not archive:
+    def pick_path(self, directory):
+        caption = 'Choose package output folder' if directory else 'Find a PS3 disc ISO'
+        dialog = QFileDialog(self, caption)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog)
+        if directory:
+            dialog.setFileMode(QFileDialog.FileMode.Directory)
+            dialog.setOption(QFileDialog.Option.ShowDirsOnly)
+        else:
+            dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+            dialog.setNameFilter('PS3 disc images (*.iso)')
+        current = (self.output if directory else self.iso).text().strip()
+        if current:
+            start = Path(current) if directory else Path(current).parent
+        elif directory and self.iso.text().strip():
+            start = Path(self.iso.text().strip()).parent
+        else:
+            start = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        if start:
+            dialog.setDirectory(str(start))
+        if dialog.exec():
+            return dialog.selectedFiles()[0]
+        return ''
+
+    def update_build_button(self):
+        active = self.worker and self.worker.isRunning()
+        self.build_button.setEnabled(bool(self.iso.text().strip() and self.output.text().strip()) and not active)
+
+    def start_build(self):
+        if self.worker and self.worker.isRunning():
             return
-        self.status.setText('Opening the Retail2Pkg launcher…')
-        self.launch_button.setEnabled(False)
-        self.worker = TaskWorker(run_launcher, archive)
-        self.worker.done.connect(self.launcher_closed)
-        self.worker.error.connect(self.status.setText)
-        self.worker.finished.connect(self.enable_launch)
+        iso, output = (field.text().strip() for field in (self.iso, self.output))
+        if not (iso and output):
+            return
+        self.extraction.setRange(0, 100)
+        self.extraction.setFormat('Preparing build…')
+        self.extraction.setValue(0)
+        self.batch_status.clear()
+        self.log.clear()
+        self.build_button.setEnabled(False)
+        self.output_button.setEnabled(False)
+        self.worker = DiscPackageWorker(iso, output)
+        self.worker.message.connect(self.log.appendPlainText)
+        self.worker.extraction_percent.connect(self.show_extraction_progress)
+        self.worker.console_status.connect(self.batch_status.setText)
+        self.worker.done.connect(self.show_result)
+        self.worker.error.connect(self.show_error)
+        self.worker.finished.connect(self.update_build_button)
         self.worker.start()
 
-    def launcher_closed(self, result):
-        self.status.setText('The launcher closed. It opens the package folder after a successful build.')
+    def show_extraction_progress(self, percent):
+        if percent == 0:
+            self.extraction.setRange(0, 0)
+        else:
+            self.extraction.setRange(0, 100)
+            self.extraction.setFormat('ISO extraction complete')
+            self.extraction.setValue(percent)
 
-    def enable_launch(self):
-        self.launch_button.setEnabled(True)
+    def show_result(self, result):
+        self.output_path = result['folder']
+        self.output_button.setEnabled(True)
+        self.batch_status.setText('Build complete')
+        paths = '\n'.join(result['packages'])
+        self.log.appendPlainText(f'Saved PKGs:\n{paths}')
+
+    def show_error(self, error):
+        if self.extraction.maximum() == 0:
+            self.extraction.setRange(0, 100)
+            self.extraction.setFormat('ISO extraction failed')
+            self.extraction.setValue(0)
+        elif self.extraction.value() == 0:
+            self.extraction.setFormat('Build stopped')
+        self.batch_status.clear()
+        self.log.appendPlainText(f'Build stopped: {error}')
+
+    def open_output(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_path))
 
     def reject(self):
         if not (self.worker and self.worker.isRunning()):

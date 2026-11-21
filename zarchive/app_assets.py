@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 
 def asset_path(filename: str) -> Path:
-    allowed = {"ZSaveArchive.png", "ZSaveArchive.ico", "ZSaveArchive_Original.png"}
+    allowed = {"ZSaveArchive.png", "ZSaveArchive.ico", "ZSaveArchive_Original.png", "Retail2Pkg_ISO_Launcher_v3.zip"}
     if filename not in allowed:
         raise ValueError("Unknown application asset")
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
