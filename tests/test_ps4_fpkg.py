@@ -74,6 +74,9 @@ class FpkgTests(unittest.TestCase):
     def test_gp4_payload_paths_and_optional_keystone(self):
         (self.base / 'sce_sys' / 'keystone').touch()
         (self.base / 'sce_sys' / 'playgo-chunk.dat').touch()
+        about = self.base / 'sce_sys' / 'About'
+        about.mkdir()
+        (about / 'generated.dat').touch()
         (self.base / 'foo').mkdir()
         (self.base / 'foo' / 'a&b.bin').touch()
         for include in (True, False):
@@ -85,6 +88,9 @@ class FpkgTests(unittest.TestCase):
             files = {file.get('targ_path') for file in root.findall('files/file')}
             self.assertIn('foo/a&b.bin', files)
             self.assertNotIn('sce_sys/playgo-chunk.dat', files)
+            self.assertNotIn('sce_sys/About/generated.dat', files)
+            self.assertIsNone(root.find(".//dir[@targ_name='About']"))
+            self.assertTrue((about / 'generated.dat').is_file())
             self.assertEqual('sce_sys/keystone' in files, include)
             self.assertIsNotNone(root.find("rootdir/dir[@targ_name='foo']"))
 
@@ -206,8 +212,14 @@ class FpkgTests(unittest.TestCase):
         imported = ET.parse(gp4)
         for entry in imported.findall('files/file'):
             entry.set('orig_path', 'X:/original-computer/' + entry.get('targ_path'))
+        ET.SubElement(imported.find('files'), 'file', targ_path=r'sce_sys\about\generated.dat',
+                      orig_path='X:/old/generated.dat')
+        ET.SubElement(imported.find("rootdir/dir[@targ_name='sce_sys']"), 'dir', targ_name='about')
         imported.write(gp4, encoding='utf-8', xml_declaration=True)
         original = gp4.read_bytes()
+        about = self.base / 'sce_sys' / 'about'
+        about.mkdir()
+        (about / 'generated.dat').touch()
         (self.base / 'sce_sys' / 'keystone').write_bytes(b'keystone')
 
         def build(tool, project, output, log, progress, cancelled):
@@ -216,6 +228,8 @@ class FpkgTests(unittest.TestCase):
             files = {entry.get('targ_path'): Path(entry.get('orig_path')) for entry in built.findall('files/file')}
             self.assertEqual(files['eboot.bin'], self.base / 'eboot.bin')
             self.assertEqual(files['sce_sys/keystone'], self.base / 'sce_sys' / 'keystone')
+            self.assertEqual(len(files), 3)
+            self.assertIsNone(built.find(".//dir[@targ_name='about']"))
             make_package(output, self.base)
 
         build_packages([base], self.tool, self.output, existing_gp4=gp4, runner=build)
