@@ -41,8 +41,9 @@ PS3 tools
 ---------
 
 - Retail2Pkg ISO Launcher v3. Open it under PS3 Tools. Save Archive bundles
-  the toolkit. Pick the ISO and output folder in Save Archive and start the
-  build. Windows mounts the ISO read-only and copies PS3_GAME. The in-app
+  the toolkit. Choose a PS3 disc ISO or PS3_GAME folder, then select an
+  output folder and start the build. Windows mounts ISO input read-only.
+  The builder copies PS3_GAME into a fresh work folder. The in-app
   log shows conversion and patch downloads. Open output folder shows the
   resulting packages. Some games require an online update.
 - ISO to XMB Assistant. Choose CFW2OFW Helper and a workspace parent, then

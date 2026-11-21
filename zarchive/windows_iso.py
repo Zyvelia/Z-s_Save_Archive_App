@@ -1,4 +1,4 @@
-"""Copy PS3_GAME from an ISO mounted read-only by Windows."""
+"""Copy PS3_GAME from a folder or an ISO mounted read-only by Windows."""
 from __future__ import annotations
 
 import base64
@@ -17,23 +17,26 @@ $destination = $env:ZARCHIVE_DISC_GAME
 $mountedHere = $false
 
 try {
-    $image = Get-DiskImage -ImagePath $iso
-    if (!$image.Attached) {
-        $image = Mount-DiskImage -ImagePath $iso -Access ReadOnly -PassThru
-        $mountedHere = $true
-    }
-
-    $game = $null
-    for ($attempt = 0; $attempt -lt 12 -and !$game; $attempt++) {
-        foreach ($volume in @($image | Get-Volume -ErrorAction SilentlyContinue)) {
-            if (!$volume.DriveLetter) { continue }
-            $candidate = '{0}:\PS3_GAME' -f $volume.DriveLetter
-            if (Test-Path -LiteralPath $candidate -PathType Container) {
-                $game = $candidate
-                break
-            }
+    $game = $env:ZARCHIVE_PS3_GAME
+    if (!$game) {
+        $image = Get-DiskImage -ImagePath $iso
+        if (!$image.Attached) {
+            $image = Mount-DiskImage -ImagePath $iso -Access ReadOnly -PassThru
+            $mountedHere = $true
         }
-        if (!$game -and $attempt -lt 11) { Start-Sleep -Milliseconds 500 }
+
+        $game = $null
+        for ($attempt = 0; $attempt -lt 12 -and !$game; $attempt++) {
+            foreach ($volume in @($image | Get-Volume -ErrorAction SilentlyContinue)) {
+                if (!$volume.DriveLetter) { continue }
+                $candidate = '{0}:\PS3_GAME' -f $volume.DriveLetter
+                if (Test-Path -LiteralPath $candidate -PathType Container) {
+                    $game = $candidate
+                    break
+                }
+            }
+            if (!$game -and $attempt -lt 11) { Start-Sleep -Milliseconds 500 }
+        }
     }
     if (!$game) {
         throw 'Windows could not find PS3_GAME at the root of the ISO. Select a readable, decrypted PS3 disc ISO.'
@@ -90,15 +93,27 @@ exit 0
 
 
 def copy_iso_game(source: Path, destination: Path, *, progress=None, extraction_progress=None):
+    _copy_game(source, destination, from_iso=True, progress=progress,
+               extraction_progress=extraction_progress)
+
+
+def copy_folder_game(source: Path, destination: Path, *, progress=None, extraction_progress=None):
+    _copy_game(source, destination, from_iso=False, progress=progress,
+               extraction_progress=extraction_progress)
+
+
+def _copy_game(source, destination, *, from_iso, progress, extraction_progress):
     if progress is not None:
-        progress('Mounting the ISO read-only and copying PS3_GAME. Large games may take several minutes.')
+        action = 'Mounting the ISO read-only and copying PS3_GAME' if from_iso else 'Copying the selected PS3_GAME folder'
+        progress(f'{action}. Large games may take several minutes.')
     if extraction_progress is not None:
         extraction_progress(0)
 
     system_root = Path(os.environ.get('SystemRoot', r'C:\Windows'))
     powershell = system_root / 'System32' / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe'
     encoded = base64.b64encode(_COPY_GAME.encode('utf-16-le')).decode('ascii')
-    env = dict(os.environ, ZARCHIVE_DISC_ISO=str(source), ZARCHIVE_DISC_GAME=str(destination))
+    env = dict(os.environ, ZARCHIVE_DISC_ISO=str(source) if from_iso else '',
+               ZARCHIVE_PS3_GAME='' if from_iso else str(source), ZARCHIVE_DISC_GAME=str(destination))
     result = subprocess.run(
         [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', encoded],
         env=env, stdin=subprocess.DEVNULL, capture_output=True, encoding='utf-8',
@@ -106,7 +121,8 @@ def copy_iso_game(source: Path, destination: Path, *, progress=None, extraction_
     )
     if result.returncode:
         details = '\n'.join(part.strip() for part in (result.stderr, result.stdout) if part.strip())
-        raise RuntimeError(f'Windows ISO extraction failed (exit {result.returncode}).\n{details}'.rstrip())
+        operation = 'ISO extraction' if from_iso else 'PS3_GAME copy'
+        raise RuntimeError(f'Windows {operation} failed (exit {result.returncode}).\n{details}'.rstrip())
     if result.stderr.strip() and progress is not None:
         progress(result.stderr.strip())
     if extraction_progress is not None:

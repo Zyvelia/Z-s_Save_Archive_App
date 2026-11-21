@@ -11,7 +11,7 @@ from zipfile import ZipFile
 from test_v20 import write_sfo
 from zarchive.iso_converter_v20 import extract_iso, stage_conversion
 from zarchive.app_assets import asset_path
-from zarchive.windows_iso import copy_iso_game
+from zarchive.windows_iso import copy_folder_game, copy_iso_game
 from zarchive.retail2pkg_v31 import PatchProgress, build_pkgs_locally, run_windows_batch, stream_batch_log
 
 
@@ -95,6 +95,45 @@ class DiscPackageBuildTests(unittest.TestCase):
             self.assertEqual(len(result['packages']), 2)
             self.assertEqual(Path(result['folder']).name, 'BLUS30982')
             self.assertTrue(all(Path(pkg).is_file() for pkg in result['packages']))
+
+    def test_folder_build_hands_the_staged_copy_to_retail2pkg(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve()
+            game = root / 'Disc backup' / 'PS3_GAME'
+            game.mkdir(parents=True)
+            (game / 'USRDIR').mkdir()
+            write_sfo(game / 'PARAM.SFO')
+            output = root / 'packages'
+            output.mkdir()
+
+            def copy(source, destination, **kwargs):
+                self.assertEqual(source, game)
+                destination.mkdir()
+                (destination / 'PARAM.SFO').write_bytes((source / 'PARAM.SFO').read_bytes())
+
+            def batch(stage, timeout, progress, console_status):
+                (stage / 'PS3_GAME' / 'PARAM.SFO').unlink()
+                converted = stage / 'BLUS30982'
+                converted.mkdir()
+                for filename in ('BLUS30982.pkg', 'BLUS30982_-_Update.pkg'):
+                    (converted / filename).write_bytes(b'\x7fPKG' + b'x' * 100)
+                return SimpleNamespace(returncode=0)
+
+            with patch('zarchive.retail2pkg_v31.copy_folder_game', side_effect=copy):
+                for source in (game, game.parent):
+                    result = build_pkgs_locally(source, output, runner=batch)
+                    self.assertEqual(len(result['packages']), 2)
+                    self.assertTrue((game / 'PARAM.SFO').is_file())
+            with self.assertRaisesRegex(ValueError, 'outside the source'):
+                build_pkgs_locally(game, game / 'USRDIR', runner=self.fail)
+
+    def test_windows_folder_copy_uses_the_game_path_without_an_iso(self):
+        with patch('zarchive.windows_iso.subprocess.run',
+                   return_value=SimpleNamespace(returncode=0, stdout='', stderr='')) as launch:
+            copy_folder_game(Path('original/PS3_GAME'), Path('work/PS3_GAME'))
+        env = launch.call_args.kwargs['env']
+        self.assertEqual(env['ZARCHIVE_DISC_ISO'], '')
+        self.assertEqual(env['ZARCHIVE_PS3_GAME'], str(Path('original/PS3_GAME')))
 
     def test_patch_eta_resets_between_files_and_reports_a_stall(self):
         progress = PatchProgress()

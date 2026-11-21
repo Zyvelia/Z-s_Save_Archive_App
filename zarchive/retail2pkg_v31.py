@@ -18,7 +18,7 @@ from .app_assets import asset_path
 from .converter_output_v21 import validate_pkg
 from .console_v27 import summarize_transfer
 from .iso_converter_v20 import inspect_game
-from .windows_iso import copy_iso_game
+from .windows_iso import copy_folder_game, copy_iso_game
 
 LAUNCHER_FOLDER = 'Retail2Pkg ISO Launcher'
 SCRIPT_HASHES = {
@@ -188,20 +188,26 @@ def find_packages(stage: Path) -> list[Path]:
     raise ValueError('Retail2Pkg did not leave both the game and update PKGs.')
 
 
-def build_pkgs_locally(iso_path, output_folder, *, progress=None, extraction_progress=None,
+def build_pkgs_locally(source_path, output_folder, *, progress=None, extraction_progress=None,
                        console_status=None, runner=None, timeout=7200):
     if sys.platform != 'win32' and runner is None:
         raise OSError('Retail2Pkg requires Windows 10 or 11.')
     if progress:
-        progress(f'Checking ISO: {iso_path}')
-    iso = Path(iso_path).expanduser().resolve(strict=True)
-    if not iso.is_file() or iso.suffix.lower() != '.iso':
-        raise ValueError('Select an existing PS3 disc ISO.')
+        progress(f'Checking game source: {source_path}')
+    source = Path(source_path).expanduser().resolve(strict=True)
+    from_iso = source.is_file() and source.suffix.lower() == '.iso'
+    if not from_iso:
+        if not source.is_dir():
+            raise ValueError('Select an existing PS3 disc ISO or PS3_GAME folder.')
+        source = Path(inspect_game(source)['source'])
     if progress:
         progress(f'Checking output folder: {output_folder}')
     output = Path(output_folder).expanduser().resolve(strict=True)
     if not output.is_dir() or str(output).startswith('\\\\'):
         raise ValueError('Choose an existing output folder on a local drive.')
+
+    if not from_iso and (output == source or source in output.parents):
+        raise ValueError('Choose an output folder outside the source PS3_GAME folder.')
 
     stage = output / ('Retail2Pkg_' + uuid.uuid4().hex[:8])
     if progress:
@@ -217,7 +223,8 @@ def build_pkgs_locally(iso_path, output_folder, *, progress=None, extraction_pro
             if not any((folder / 'MSVCR120.dll').is_file() for folder in (x86_system, stage)):
                 raise RuntimeError('Install the Microsoft Visual C++ 2013 Redistributable (x86) to supply MSVCR120.dll.')
         game = stage / 'PS3_GAME'
-        copy_iso_game(iso, game, progress=progress, extraction_progress=extraction_progress)
+        copy_game = copy_iso_game if from_iso else copy_folder_game
+        copy_game(source, game, progress=progress, extraction_progress=extraction_progress)
         info = inspect_game(game)
         if progress:
             progress(f"Found {info['title']} [{info['title_id']}]. Starting Retail2Pkg.bat.")

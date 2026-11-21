@@ -30,8 +30,8 @@ class DiscPackageWorker(TaskWorker):
     extraction_percent = Signal(int)
     console_status = Signal(str)
 
-    def __init__(self, iso, output):
-        super().__init__(build_pkgs_locally, iso, output)
+    def __init__(self, source, output):
+        super().__init__(build_pkgs_locally, source, output)
         self.kwargs.update(progress=self.message.emit, extraction_progress=self.extraction_percent.emit,
                            console_status=self.console_status.emit)
 
@@ -67,14 +67,15 @@ class DiscPackageDialog(QDialog):
             form.addRow(label, row)
             return field
 
-        self.iso = add('PS3 disc ISO', ('Find ISO…', lambda: self.pick_path(False)))
-        self.iso.setPlaceholderText('Choose a readable PS3 disc image')
-        self.output = add('Save packages to', ('Choose folder…', lambda: self.pick_path(True)))
+        self.source = add('Game source', ('Find ISO…', lambda: self.pick_path('iso')),
+                          ('Choose PS3_GAME…', lambda: self.pick_path('game')))
+        self.source.setPlaceholderText('Choose a PS3 disc ISO or PS3_GAME folder')
+        self.output = add('Save packages to', ('Choose folder…', lambda: self.pick_path('output')))
         self.output.setPlaceholderText('Choose a folder on a local drive')
-        self.iso.textChanged.connect(self.update_build_button)
+        self.source.textChanged.connect(self.update_build_button)
         self.output.textChanged.connect(self.update_build_button)
         self.extraction = QProgressBar()
-        self.extraction.setFormat('Ready to extract ISO')
+        self.extraction.setFormat('Ready to copy game files')
         self.extraction.setValue(0)
         layout.addWidget(self.extraction)
         self.activity = QLabel()
@@ -117,21 +118,23 @@ class DiscPackageDialog(QDialog):
         if path:
             field.setText(path)
 
-    def pick_path(self, directory):
-        caption = 'Choose package output folder' if directory else 'Find a PS3 disc ISO'
+    def pick_path(self, kind):
+        captions = {'iso': 'Find a PS3 disc ISO', 'game': 'Choose PS3_GAME or its parent',
+                    'output': 'Choose package output folder'}
+        caption = captions[kind]
         dialog = QFileDialog(self, caption)
         dialog.setOption(QFileDialog.Option.DontUseNativeDialog)
-        if directory:
+        if kind != 'iso':
             dialog.setFileMode(QFileDialog.FileMode.Directory)
             dialog.setOption(QFileDialog.Option.ShowDirsOnly)
         else:
             dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
             dialog.setNameFilter('PS3 disc images (*.iso)')
-        current = (self.output if directory else self.iso).text().strip()
+        current = (self.output if kind == 'output' else self.source).text().strip()
         if current:
-            start = Path(current) if directory else Path(current).parent
-        elif directory and self.iso.text().strip():
-            start = Path(self.iso.text().strip()).parent
+            start = Path(current) if Path(current).is_dir() else Path(current).parent
+        elif kind == 'output' and self.source.text().strip():
+            start = Path(self.source.text().strip()).parent
         else:
             start = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
         if start:
@@ -142,13 +145,13 @@ class DiscPackageDialog(QDialog):
 
     def update_build_button(self):
         active = self.worker and self.worker.isRunning()
-        self.build_button.setEnabled(bool(self.iso.text().strip() and self.output.text().strip()) and not active)
+        self.build_button.setEnabled(bool(self.source.text().strip() and self.output.text().strip()) and not active)
 
     def start_build(self):
         if self.worker and self.worker.isRunning():
             return
-        iso, output = (field.text().strip() for field in (self.iso, self.output))
-        if not (iso and output):
+        source, output = (field.text().strip() for field in (self.source, self.output))
+        if not (source and output):
             return
         self.extraction.setRange(0, 100)
         self.extraction.setFormat('Preparing build…')
@@ -163,7 +166,7 @@ class DiscPackageDialog(QDialog):
         self.update_activity()
         self.build_button.setEnabled(False)
         self.output_button.setEnabled(False)
-        self.worker = DiscPackageWorker(iso, output)
+        self.worker = DiscPackageWorker(source, output)
         self.worker.message.connect(self.show_build_log)
         self.worker.extraction_percent.connect(self.show_extraction_progress)
         self.worker.console_status.connect(self.show_console_status)
@@ -195,13 +198,13 @@ class DiscPackageDialog(QDialog):
 
     def show_extraction_progress(self, percent):
         self.last_update = monotonic()
-        self.phase = 'Mounting and copying ISO' if percent == 0 else 'Running Retail2Pkg'
+        self.phase = 'Preparing game files' if percent == 0 else 'Running Retail2Pkg'
         self.update_activity()
         if percent == 0:
             self.extraction.setRange(0, 0)
         else:
             self.extraction.setRange(0, 100)
-            self.extraction.setFormat('ISO extraction complete')
+            self.extraction.setFormat('Game copy complete')
             self.extraction.setValue(percent)
 
     def show_result(self, result):
@@ -221,7 +224,7 @@ class DiscPackageDialog(QDialog):
         self.finish_activity('Build stopped')
         if self.extraction.maximum() == 0:
             self.extraction.setRange(0, 100)
-            self.extraction.setFormat('ISO extraction failed')
+            self.extraction.setFormat('Game copy failed')
             self.extraction.setValue(0)
         elif self.extraction.value() == 0:
             self.extraction.setFormat('Build stopped')
