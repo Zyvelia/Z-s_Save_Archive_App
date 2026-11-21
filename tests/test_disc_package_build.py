@@ -1,3 +1,4 @@
+import base64
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from zipfile import ZipFile
 from test_v20 import write_sfo
 from zarchive.iso_converter_v20 import extract_iso, stage_conversion
 from zarchive.app_assets import asset_path
+from zarchive.windows_iso import copy_iso_game
 from zarchive.retail2pkg_v31 import build_pkgs_locally, run_windows_batch, stream_batch_log
 
 
@@ -93,6 +95,18 @@ class DiscPackageBuildTests(unittest.TestCase):
             self.assertEqual(len(result['packages']), 2)
             self.assertEqual(Path(result['folder']).name, 'BLUS30982')
             self.assertTrue(all(Path(pkg).is_file() for pkg in result['packages']))
+
+    def test_iso_copy_normalizes_directory_attributes_and_requests_plain_text(self):
+        with patch('zarchive.windows_iso.subprocess.run',
+                   return_value=SimpleNamespace(returncode=0, stdout='', stderr='')) as launch:
+            copy_iso_game(Path('disc.iso'), Path('work/PS3_GAME'))
+        command = launch.call_args.args[0]
+        self.assertEqual(command[command.index('-OutputFormat') + 1], 'Text')
+        script = base64.b64decode(command[-1]).decode('utf-16-le')
+        self.assertIn("$ProgressPreference = 'SilentlyContinue'", script)
+        self.assertIn('Get-Item -LiteralPath $destination -Force', script)
+        self.assertIn('Get-ChildItem -LiteralPath $destination -Recurse -Force', script)
+        self.assertIn('$_.Attributes = $attributes -band (-bnot [IO.FileAttributes]::ReadOnly)', script)
 
     def test_windows_batch_requests_a_hidden_console(self):
         with tempfile.TemporaryDirectory() as scratch:

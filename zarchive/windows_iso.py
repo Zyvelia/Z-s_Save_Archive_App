@@ -10,6 +10,7 @@ import subprocess
 # Pass paths through the environment so PowerShell never interprets them as code.
 _COPY_GAME = r"""
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $iso = $env:ZARCHIVE_DISC_ISO
 $destination = $env:ZARCHIVE_DISC_GAME
@@ -58,9 +59,17 @@ try {
     if ($LASTEXITCODE -ge 8) {
         throw "Robocopy failed (exit $LASTEXITCODE). Check the output drive and available space."
     }
-    Get-ChildItem -LiteralPath $destination -Recurse -File -Force |
-        Where-Object { $_.IsReadOnly } |
-        ForEach-Object { $_.IsReadOnly = $false }
+    # Robocopy's /A-:R handles files. ISO directory attributes can still
+    # survive /DCOPY:DT and prevent the helper from removing PS3_GAME.
+    & {
+        Get-Item -LiteralPath $destination -Force
+        Get-ChildItem -LiteralPath $destination -Recurse -Force
+    } | ForEach-Object {
+        $attributes = $_.Attributes
+        if ($attributes -band [IO.FileAttributes]::ReadOnly) {
+            $_.Attributes = $attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
+        }
+    }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
@@ -91,7 +100,7 @@ def copy_iso_game(source: Path, destination: Path, *, progress=None, extraction_
     encoded = base64.b64encode(_COPY_GAME.encode('utf-16-le')).decode('ascii')
     env = dict(os.environ, ZARCHIVE_DISC_ISO=str(source), ZARCHIVE_DISC_GAME=str(destination))
     result = subprocess.run(
-        [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+        [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', encoded],
         env=env, stdin=subprocess.DEVNULL, capture_output=True, encoding='utf-8',
         errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
     )
