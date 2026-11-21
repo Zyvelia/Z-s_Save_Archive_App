@@ -1,7 +1,9 @@
 """Use the bundled Retail2Pkg v3 workflow with paths selected in Save Archive."""
 from __future__ import annotations
 
+from collections import deque
 import hashlib
+import re
 import os
 from pathlib import Path
 import shutil
@@ -14,6 +16,7 @@ from zipfile import ZipFile
 
 from .app_assets import asset_path
 from .converter_output_v21 import validate_pkg
+from .console_v27 import summarize_transfer
 from .iso_converter_v20 import inspect_game
 from .windows_iso import copy_iso_game
 
@@ -55,6 +58,43 @@ def extract_toolkit(archive_path: Path, destination: Path) -> None:
                 continue
             with archive.open(entry) as source, (destination / Path(name).name).open('xb') as target:
                 shutil.copyfileobj(source, target)
+
+
+class PatchProgress:
+    """Estimate the current patch from the helper's reported percentages."""
+
+    def __init__(self):
+        self.patch = None
+        self.samples = deque(maxlen=12)
+
+    def update(self, line, now):
+        match = re.fullmatch(r'(.+?\.pkg)\s+\.\.\.\s*(\d{1,3})%\s*', line, re.I)
+        if not match or int(match[2]) > 100:
+            self.patch = None
+            self.samples.clear()
+            return
+        patch, percent = match[1], int(match[2])
+        if patch != self.patch or (self.samples and percent < self.samples[-1]['bytes']):
+            self.samples.clear()
+        self.patch = patch
+        if not self.samples or percent > self.samples[-1]['bytes']:
+            self.samples.append({'time': now, 'bytes': percent, 'total': 100})
+
+    def estimate(self, now):
+        if not self.samples:
+            return None
+        last = self.samples[-1]
+        if last['bytes'] >= 100:
+            return 'Patch download complete'
+        quiet = now - last['time']
+        if quiet >= 20:
+            return f"Patch {last['bytes']}% · no progress for {int(quiet)}s"
+        if last['time'] - self.samples[0]['time'] < 1:
+            return f"Patch {last['bytes']}% · estimating time left…"
+        eta = summarize_transfer(self.samples)['eta_seconds']
+        remaining = max(1, round(eta))
+        minutes, seconds = divmod(remaining, 60)
+        return f"Patch {last['bytes']}% · about {minutes}:{seconds:02d} left"
 
 
 def stream_batch_log(process, log_path: Path, timeout: int, *, progress, console_status, encoding):

@@ -12,7 +12,7 @@ from test_v20 import write_sfo
 from zarchive.iso_converter_v20 import extract_iso, stage_conversion
 from zarchive.app_assets import asset_path
 from zarchive.windows_iso import copy_iso_game
-from zarchive.retail2pkg_v31 import build_pkgs_locally, run_windows_batch, stream_batch_log
+from zarchive.retail2pkg_v31 import PatchProgress, build_pkgs_locally, run_windows_batch, stream_batch_log
 
 
 class DiscPackageBuildTests(unittest.TestCase):
@@ -95,6 +95,19 @@ class DiscPackageBuildTests(unittest.TestCase):
             self.assertEqual(len(result['packages']), 2)
             self.assertEqual(Path(result['folder']).name, 'BLUS30982')
             self.assertTrue(all(Path(pkg).is_file() for pkg in result['packages']))
+
+    def test_patch_eta_resets_between_files_and_reports_a_stall(self):
+        progress = PatchProgress()
+        progress.update('first.pkg ... 20%', 0)
+        self.assertIn('estimating', progress.estimate(0))
+        progress.update('first.pkg ... 40%', 5)
+        self.assertEqual(progress.estimate(5), 'Patch 40% · about 0:15 left')
+        progress.update('first.pkg ... 40%', 24)
+        self.assertEqual(progress.estimate(25), 'Patch 40% · no progress for 20s')
+        progress.update('second.pkg ... 10%', 26)
+        self.assertEqual(progress.estimate(26), 'Patch 10% · estimating time left…')
+        progress.update('', 27)
+        self.assertIsNone(progress.estimate(27))
 
     def test_iso_copy_normalizes_directory_attributes_and_requests_plain_text(self):
         with patch('zarchive.windows_iso.subprocess.run',

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os, sys
 from time import monotonic
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal, QUrl, Qt, QStandardPaths
+from PySide6.QtCore import QThread, Signal, QUrl, Qt, QStandardPaths, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
     QPushButton,QFileDialog,QMessageBox,QFormLayout,QPlainTextEdit,QTreeWidget,QTreeWidgetItem,QProgressBar)
@@ -12,7 +12,7 @@ from .ui_v04 import STYLE
 from .editor_v18 import ArchiveV18
 from .converter_output_v21 import (inspect_conversion_output,upload_pkg_ftp,validate_pkg)
 from .workspace_history import workspace_history
-from .retail2pkg_v31 import build_pkgs_locally
+from .retail2pkg_v31 import PatchProgress, build_pkgs_locally
 from .console_v27 import summarize_transfer
 
 class TaskWorker(QThread):
@@ -43,6 +43,10 @@ class DiscPackageDialog(QDialog):
         self.resize(840, 540)
         self.worker = None
         self.output_path = None
+        self.patch_progress = PatchProgress()
+        self.activity_timer = QTimer(self)
+        self.activity_timer.setInterval(1000)
+        self.activity_timer.timeout.connect(self.update_activity)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
@@ -73,6 +77,10 @@ class DiscPackageDialog(QDialog):
         self.extraction.setFormat('Ready to extract ISO')
         self.extraction.setValue(0)
         layout.addWidget(self.extraction)
+        self.activity = QLabel()
+        self.activity.setWordWrap(True)
+        self.activity.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.activity)
         self.batch_status = QLabel()
         self.batch_status.setWordWrap(True)
         self.batch_status.setTextFormat(Qt.TextFormat.PlainText)
@@ -147,18 +155,48 @@ class DiscPackageDialog(QDialog):
         self.extraction.setValue(0)
         self.batch_status.clear()
         self.log.clear()
+        self.patch_progress = PatchProgress()
+        self.started_at = monotonic()
+        self.last_update = self.started_at
+        self.phase = 'Preparing build'
+        self.activity_timer.start()
+        self.update_activity()
         self.build_button.setEnabled(False)
         self.output_button.setEnabled(False)
         self.worker = DiscPackageWorker(iso, output)
-        self.worker.message.connect(self.log.appendPlainText)
+        self.worker.message.connect(self.show_build_log)
         self.worker.extraction_percent.connect(self.show_extraction_progress)
-        self.worker.console_status.connect(self.batch_status.setText)
+        self.worker.console_status.connect(self.show_console_status)
         self.worker.done.connect(self.show_result)
         self.worker.error.connect(self.show_error)
         self.worker.finished.connect(self.update_build_button)
         self.worker.start()
 
+    def update_activity(self):
+        now = monotonic()
+        minutes, seconds = divmod(int(now - self.started_at), 60)
+        quiet = int(now - self.last_update)
+        pieces = [self.phase, f'{minutes}:{seconds:02d} elapsed', f'last update {quiet}s ago']
+        patch = self.patch_progress.estimate(now)
+        if patch:
+            pieces.append(patch)
+        self.activity.setText(' · '.join(pieces))
+
+    def show_build_log(self, message):
+        self.last_update = monotonic()
+        self.log.appendPlainText(message)
+        self.update_activity()
+
+    def show_console_status(self, line):
+        self.last_update = monotonic()
+        self.batch_status.setText(line)
+        self.patch_progress.update(line, self.last_update)
+        self.update_activity()
+
     def show_extraction_progress(self, percent):
+        self.last_update = monotonic()
+        self.phase = 'Mounting and copying ISO' if percent == 0 else 'Running Retail2Pkg'
+        self.update_activity()
         if percent == 0:
             self.extraction.setRange(0, 0)
         else:
@@ -167,13 +205,20 @@ class DiscPackageDialog(QDialog):
             self.extraction.setValue(percent)
 
     def show_result(self, result):
+        self.finish_activity('Build complete')
         self.output_path = result['folder']
         self.output_button.setEnabled(True)
-        self.batch_status.setText('Build complete')
+        self.batch_status.clear()
         paths = '\n'.join(result['packages'])
         self.log.appendPlainText(f'Saved PKGs:\n{paths}')
 
+    def finish_activity(self, phase):
+        self.activity_timer.stop()
+        minutes, seconds = divmod(int(monotonic() - self.started_at), 60)
+        self.activity.setText(f'{phase} · {minutes}:{seconds:02d} elapsed')
+
     def show_error(self, error):
+        self.finish_activity('Build stopped')
         if self.extraction.maximum() == 0:
             self.extraction.setRange(0, 100)
             self.extraction.setFormat('ISO extraction failed')
