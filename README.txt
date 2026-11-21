@@ -55,6 +55,17 @@ PS4 imports are tagged PS4 and retain a CUSA title ID when present in the
 source path. Use the PS4 filter in the dashboard or library. In Settings,
 enable Hide PS3 tools and dashboard shortcuts for a PS4-focused layout.
 
+PS4 dump to FPKG
+----------------
+
+On Windows, open Dump to FPKG Builder and select your local
+orbis-pub-cmd.exe, the folder containing decrypted PS4 dumps, and an
+output folder. Scan to see the available base games, patches, and add-ons
+grouped by CUSA title ID and their matching archived save counts. Select
+the packages to build. For patches, also select the matching base dump.
+The builder preserves keystone by default, streams the tool log, and
+places completed packages together in a folder named for the game.
+
 PS3 tools
 ---------
 

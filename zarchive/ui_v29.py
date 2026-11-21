@@ -10,6 +10,7 @@ from .ui_v28 import Window as ExistingWindow
 from .ui_v04 import STYLE,cover_icon
 from .app_assets import asset_path
 from .appdata_v34 import AppPaths
+from .ui_ps4_fpkg import FpkgPanel
 from .navigation_v30 import classify_action, collect_legacy_actions, DEFAULT_ACTIONS, is_advanced_action
 
 DESIGN='''
@@ -85,7 +86,7 @@ class AppDataDialog(QDialog):
 class Window(ExistingWindow):
     def __init__(self,root):
         super().__init__(root)
-        self.setWindowTitle("Z's Save Archive • v3.6.25")
+        self.setWindowTitle("Z's Save Archive • v3.6.26")
         self.resize(1540,930);self.setMinimumSize(1060,720)
         self.classic_content=self.takeCentralWidget()
         # All existing tools retain their QAction callbacks, even though the menu is hidden.
@@ -114,6 +115,7 @@ class Window(ExistingWindow):
                 ('PS3 Console',lambda:self.open_classic('ftp')),
                 ('Save Editor',lambda:self.open_section('Save Editor')),
                 ('PS3 Tools',lambda:self.open_section('PS3 Tools')),
+                ('Dump to FPKG Builder',lambda:self.open_section('Dump to FPKG Builder')),
                 ('Releases',lambda:self.open_section('Releases')),
                 ('Settings',lambda:self.open_section('Settings'))]
         for index,(text,handler) in enumerate(routes):
@@ -131,6 +133,15 @@ class Window(ExistingWindow):
         self.make_home()
         self.apply_ps3_visibility()
         self.open_home()
+
+    def closeEvent(self, event):
+        panel = self.section_pages.get('Dump to FPKG Builder')
+        if panel is not None and panel.worker is not None:
+            panel.cancel()
+            self.open_section('Dump to FPKG Builder')
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def make_home(self):
         body=QWidget();self.home.setWidget(body)
@@ -246,6 +257,8 @@ class Window(ExistingWindow):
 
     def _make_section(self, section):
         """Build action panels from existing wired QAction objects (no detached tool copies)."""
+        if section == 'Dump to FPKG Builder':
+            return FpkgPanel(self.archive, self.ui_settings)
         page=QScrollArea();page.setWidgetResizable(True)
         body=QWidget();page.setWidget(body)
         outer=QVBoxLayout(body);outer.setContentsMargins(25,23,25,23);outer.setSpacing(14)
