@@ -86,6 +86,14 @@ class FpkgPanel(QWidget):
         self.output = DirectoryInput()
         self.output.setPlaceholderText('Choose or drop an output folder')
         self.output_button = add('Save packages to', self.output, lambda: self.choose_folder(self.output))
+        self.existing_base = QLineEdit()
+        self.existing_base.setPlaceholderText('Optional · for a patch-only build')
+        self.base_button = add('Existing base PKG', self.existing_base, lambda: self.choose_file(
+            self.existing_base, 'Choose an existing base package', 'PS4 package (*.pkg)'))
+        self.existing_gp4 = QLineEdit()
+        self.existing_gp4.setPlaceholderText('Optional · used for the matching selected dump')
+        self.gp4_button = add('Existing GP4', self.existing_gp4, lambda: self.choose_file(
+            self.existing_gp4, 'Choose a build GP4', 'PS4 build project (*.gp4)'))
         options = QHBoxLayout()
         self.keystone = QCheckBox('Preserve sce_sys/keystone')
         self.keystone.setChecked(True)
@@ -146,6 +154,11 @@ class FpkgPanel(QWidget):
         if chosen:
             field.setText(chosen)
 
+    def choose_file(self, field, title, file_filter):
+        chosen, _ = QFileDialog.getOpenFileName(self, title, field.text(), file_filter)
+        if chosen:
+            field.setText(chosen)
+
     def choose_tool(self):
         chosen, _ = QFileDialog.getOpenFileName(self, 'Choose orbis-pub-cmd.exe', self.tool.text(),
                                                 'Package tool (orbis-pub-cmd.exe)')
@@ -177,7 +190,8 @@ class FpkgPanel(QWidget):
     def update_buttons(self, *_):
         active = self.worker is not None
         for widget in (self.tool, self.tool_button, self.source, self.source_button,
-                       self.output, self.output_button, self.tree, self.keystone, self.storage):
+                       self.output, self.output_button, self.existing_base, self.base_button,
+                       self.existing_gp4, self.gp4_button, self.tree, self.keystone, self.storage):
             widget.setEnabled(not active)
         self.scan_button.setEnabled(not active and bool(self.source.text().strip()))
         self.build_button.setEnabled(not active and self.scan_path is not None and bool(self.selected()))
@@ -243,7 +257,9 @@ class FpkgPanel(QWidget):
         self.log_toggle.setChecked(True)
         worker = PackageWorker(build_packages, self.selected(), self.tool.text().strip(),
                                self.output.text().strip(), preserve_keystone=self.keystone.isChecked(),
-                               storage_type=self.storage.currentText())
+                               storage_type=self.storage.currentText(),
+                               existing_base=self.existing_base.text().strip(),
+                               existing_gp4=self.existing_gp4.text().strip())
         worker.options.update(log=worker.log.emit, progress=worker.progress.emit)
         self.start(worker, self.show_build)
 
