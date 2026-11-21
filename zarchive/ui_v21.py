@@ -63,8 +63,8 @@ class DiscPackageDialog(QDialog):
                            ('Folder…', lambda: QFileDialog.getExistingDirectory(self, 'Choose Retail2Pkg folder')),
                            ('ZIP…', lambda: self.pick_file('Retail2Pkg ZIP (*.zip)')))
         self.output = add('Save PKGs to', ('Browse…', lambda: QFileDialog.getExistingDirectory(self, 'Choose PKG output folder')))
-        self.extractor = add('7-Zip', ('Browse…', lambda: self.pick_file('7-Zip executable (*.exe)')))
-        self.extractor.setPlaceholderText('Auto-detect 7z.exe if blank')
+        self.extractor = add('ISO extractor', ('Browse…', lambda: self.pick_file('7z.exe or WinRAR.exe (*.exe)')))
+        self.extractor.setPlaceholderText('7z.exe or WinRAR.exe · auto-detect 7-Zip if blank')
         self.extraction = QProgressBar()
         self.extraction.setFormat('ISO extraction: %p%')
         layout.addWidget(self.extraction)
@@ -109,6 +109,9 @@ class DiscPackageDialog(QDialog):
             'the Windows console if the batch asks you to press a key.'
         ) != QMessageBox.StandardButton.Yes:
             return
+        self.using_winrar = Path(extractor).name.casefold() == 'winrar.exe'
+        self.extraction.setRange(0, 100)
+        self.extraction.setFormat('ISO extraction: %p%')
         self.extraction.setValue(0)
         self.batch_status.clear()
         self.log.clear()
@@ -116,12 +119,21 @@ class DiscPackageDialog(QDialog):
         self.output_button.setEnabled(False)
         self.worker = DiscPackageWorker(iso, toolkit, output, extractor)
         self.worker.message.connect(self.log.appendPlainText)
-        self.worker.extraction_percent.connect(self.extraction.setValue)
+        self.worker.extraction_percent.connect(self.show_extraction_progress)
         self.worker.console_status.connect(self.batch_status.setText)
         self.worker.done.connect(self.show_result)
         self.worker.error.connect(self.show_error)
         self.worker.finished.connect(lambda: self.build_button.setEnabled(True))
         self.worker.start()
+
+    def show_extraction_progress(self, percent):
+        if self.using_winrar and percent == 0:
+            self.extraction.setRange(0, 0)
+            self.extraction.setFormat('Extracting with WinRAR…')
+        else:
+            self.extraction.setRange(0, 100)
+            self.extraction.setFormat('ISO extraction: %p%')
+            self.extraction.setValue(percent)
 
     def show_result(self, result):
         self.output_path = result['output_folder'] if result['success'] else result['staging']
@@ -134,6 +146,9 @@ class DiscPackageDialog(QDialog):
             self.log.appendPlainText(f"Retail2Pkg did not yield a build to copy. Check {result['staging']}.")
 
     def show_error(self, error):
+        if self.extraction.maximum() == 0:
+            self.extraction.setRange(0, 100)
+            self.extraction.setFormat('ISO extraction failed')
         self.batch_status.clear()
         self.log.appendPlainText(f'Build stopped: {error}')
 

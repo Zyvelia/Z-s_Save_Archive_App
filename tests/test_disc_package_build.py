@@ -8,7 +8,7 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 from test_v20 import write_sfo
-from zarchive.iso_converter_v20 import extract_iso
+from zarchive.iso_converter_v20 import extract_iso, stage_conversion
 from zarchive.retail2pkg_v31 import REQUIRED_FILES, build_pkgs_locally, stream_batch_log
 
 
@@ -19,6 +19,43 @@ class DiscPackageBuildTests(unittest.TestCase):
                      "import time; print('  21% 1 - file', flush=True); time.sleep(0.8)"],
                     None, extraction_progress=reported.append)
         self.assertEqual(reported, [0, 21, 100])
+
+    def test_extraction_retains_error_before_progress_noise(self):
+        command = [sys.executable, '-c', "import sys; "
+                   "print('ERROR: Unexpected end of archive'); "
+                   "print(' 99% - PS3UPDAT.PUP' * 500); "
+                   "print('Open Errors: 1'); sys.exit(2)"]
+        with self.assertRaises(RuntimeError) as raised:
+            extract_iso(command, None)
+        message = str(raised.exception)
+        self.assertIn('Unexpected end of archive', message)
+        self.assertIn('Open Errors: 1', message)
+        self.assertNotIn('PS3UPDAT.PUP', message)
+
+    def test_winrar_command_extracts_to_the_staging_directory(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            iso = root / 'disc.iso'
+            iso.write_bytes(b'\0' * 0x8001 + b'CD001')
+            toolkit = root / 'tools'
+            toolkit.mkdir()
+            helper = toolkit / 'CFW2OFW_Helper.exe'
+            helper.touch()
+            winrar = toolkit / 'WinRAR.exe'
+            winrar.touch()
+            stage = root / 'stage'
+
+            def extract(command, cancelled, progress, extraction_progress):
+                self.assertEqual(command[:4], [str(winrar), 'x', '-ibck', '-y'])
+                self.assertEqual(Path(command[-2]), iso)
+                self.assertEqual(Path(command[-1]), stage / 'extracted')
+                game = Path(command[-1]) / 'PS3_GAME'
+                game.mkdir()
+                write_sfo(game / 'PARAM.SFO')
+
+            with patch('zarchive.iso_converter_v20.extract_iso', side_effect=extract):
+                stage_conversion(iso, helper, stage, extractor=winrar)
+            self.assertTrue((stage / 'PS3_GAME' / 'PARAM.SFO').is_file())
 
     def test_streams_partial_patch_progress_and_keeps_completed_lines(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -56,6 +93,7 @@ class DiscPackageBuildTests(unittest.TestCase):
 
             def extract(command, cancelled, progress, extraction_progress):
                 self.assertIn('-bsp1', command)
+                self.assertIn('-ir!PS3_GAME', command)
                 extracted = Path(next(item[2:] for item in command if item.startswith('-o')))
                 game = extracted / 'Disc Backup' / 'PS3_GAME'
                 game.mkdir(parents=True)

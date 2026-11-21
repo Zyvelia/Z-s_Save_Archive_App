@@ -4,6 +4,7 @@ CFW2OFW Helper is an optional, separately installed third-party program.
 It may delete PS3_GAME in its work directory; this adapter stages a copy.
 """
 from __future__ import annotations
+from collections import deque
 import os, re, shutil, subprocess, json
 from tempfile import TemporaryDirectory
 from pathlib import Path
@@ -122,14 +123,35 @@ def safe_copy_tree(src: Path, dest: Path, cancelled=None) -> None:
                     copy_function=lambda source, target: copy_staging_file(source, target, cancelled))
 
 
+def extraction_diagnostics(reader):
+    """Prefer actual extractor warnings and errors over progress animation."""
+    reader.seek(0)
+    details = deque(maxlen=20)
+    summary = deque(maxlen=6)
+    fallback = deque(maxlen=8)
+    for raw_line in reader:
+        for item in re.split(rb'[\r\n\x08]+', raw_line):
+            line = item.decode(errors='replace').strip()
+            if not line or re.match(r'^[0-9]{1,3}%', line):
+                continue
+            fallback.append(line)
+            if re.match(r'^(?:Archives with Errors|Warnings|Open Errors|Sub items Errors):', line, re.I):
+                summary.append(line)
+            elif re.search(r'error|warn|can not|cannot|failed|unexpected|unsupported|denied|not enough|no space|not archive', line, re.I):
+                details.append(line)
+    return '\n'.join(dict.fromkeys([*details, *summary] if details else fallback))
+
+
 def extract_iso(command, cancelled, progress=None, extraction_progress=None):
     from time import monotonic
 
+    name = 'WinRAR' if Path(command[0]).name.casefold() == 'winrar.exe' else '7-Zip'
     # Separate handles keep polling from changing the child's write position.
     with TemporaryDirectory(prefix='zarchive-7zip-') as temporary:
         log_path = Path(temporary) / '7zip.log'
         with log_path.open('wb') as log, log_path.open('rb') as reader, subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT
+            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         ) as process:
             started = monotonic()
             next_update = started + 10
@@ -144,7 +166,7 @@ def extract_iso(command, cancelled, progress=None, extraction_progress=None):
                     except subprocess.TimeoutExpired:
                         now = monotonic()
                         if now - started >= 3600:
-                            raise RuntimeError('7-Zip extraction timed out after one hour.')
+                            raise RuntimeError(f'{name} extraction timed out after one hour.')
                         if extraction_progress is not None:
                             end = reader.seek(0, os.SEEK_END)
                             reader.seek(max(0, end - 4096))
@@ -154,16 +176,18 @@ def extract_iso(command, cancelled, progress=None, extraction_progress=None):
                                 extraction_progress(last_percent)
                         if now >= next_update:
                             elapsed = int(now - started)
-                            _progress(progress, f'7-Zip is still extracting ({elapsed // 60}:{elapsed % 60:02d} elapsed).')
+                            _progress(progress, f'{name} is still extracting ({elapsed // 60}:{elapsed % 60:02d} elapsed).')
                             next_update = now + 10
             except BaseException:
                 process.kill()
                 process.wait()
                 raise
             if code:
-                length = reader.seek(0, os.SEEK_END)
-                reader.seek(max(0, length - 1200))
-                raise RuntimeError('7-Zip extraction failed: ' + reader.read(1200).decode(errors='replace'))
+                details = extraction_diagnostics(reader)
+                message = f'{name} extraction failed (exit {code}).'
+                if details:
+                    message += '\n' + details
+                raise RuntimeError(message)
             _progress(extraction_progress, 100)
 
 
@@ -224,10 +248,10 @@ def stage_conversion(source: str | Path, helper: str | Path, destination: str | 
         inspect_iso(src)
         if not extractor:
             detected = find_7zip()
-            if not detected: raise ValueError('ISO extraction requires 7z.exe; use Auto-find or Browse')
+            if not detected: raise ValueError('ISO extraction requires 7z.exe or WinRAR.exe; use Browse')
             extractor = detected
         ex = Path(extractor).resolve(strict=True)
-        if not ex.is_file() or ex.suffix.lower() != '.exe': raise ValueError('Select a valid 7z.exe')
+        if not ex.is_file() or ex.suffix.lower() != '.exe': raise ValueError('Select a valid 7z.exe or WinRAR.exe')
         info = None
     else: raise ValueError('Select a PS3_GAME folder or a PS3 ISO')
     # Require workspace outside source and helper directories.
@@ -252,12 +276,23 @@ def stage_conversion(source: str | Path, helper: str | Path, destination: str | 
         staged_tool = work / tool.name
         if not staged_tool.exists():raise ValueError('Converter executable was not staged')
         if info is None:
-            _progress(progress, f'Extracting {src.name} ({src.stat().st_size / 1024**3:.2f} GiB) with 7-Zip.')
-            _progress(progress, f'7-Zip executable: {ex}')
+            winrar = ex.name.casefold() == 'winrar.exe'
+            tool_name = 'WinRAR' if winrar else '7-Zip'
+            _progress(progress, f'Extracting {src.name} ({src.stat().st_size / 1024**3:.2f} GiB) with {tool_name}.')
+            _progress(progress, f'{tool_name} executable: {ex}')
             extract_dir = work / 'extracted'
             extract_dir.mkdir()
-            command = [str(ex), 'x', '-y', '-bsp1', f'-o{extract_dir}', str(src)]
-            extract_iso(command, cancelled, progress, extraction_progress)
+            if winrar:
+                rar_log = work / 'winrar-errors.log'
+                command = [str(ex), 'x', '-ibck', '-y', f'-ilog{rar_log}', str(src), str(extract_dir) + os.sep]
+            else:
+                command = [str(ex), 'x', '-y', '-bsp1', '-ir!PS3_GAME', f'-o{extract_dir}', str(src)]
+            try:
+                extract_iso(command, cancelled, progress, extraction_progress)
+            except RuntimeError as exc:
+                if winrar and rar_log.is_file():
+                    raise RuntimeError(f'{exc}\nWinRAR details: {rar_log}') from exc
+                raise
             _progress(progress, 'Finding and validating extracted PS3_GAME...')
             game = find_extracted_game(extract_dir, cancelled)
             info = inspect_game(game)
