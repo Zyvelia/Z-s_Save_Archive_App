@@ -59,7 +59,6 @@ class ArchiveV12(ArchiveV11):
         self._save(save_id)
         r=self.conn.execute('SELECT workflow FROM save_workflow_state WHERE save_id=?',(save_id,)).fetchone()
         return r['workflow'] if r else 'Working'
-    def preview_import(self,path):return inspect_source(path)
     def inspect_archived(self,save_id):
         row=self._save(save_id)
         path=(self.root/row['stored_path']).resolve()

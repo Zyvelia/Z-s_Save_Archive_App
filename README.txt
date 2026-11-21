@@ -37,6 +37,15 @@ to the full path of ISCC.exe in Command Prompt and run Build_All.bat again.
 
 Run python -m unittest discover -s tests -q to check the source.
 
+PC save discovery
+-----------------
+
+Open Saves & Backups > Discover and import PC saves. The scan matches
+known save locations and Steam Cloud cache folders to game names. Choose
+a storefront to narrow the scan. Review the checked folders and click
+Import selected saves to copy them into the archive. Re-running the scan
+skips identical saves already archived.
+
 PS4 saves
 ---------
 

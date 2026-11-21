@@ -103,8 +103,8 @@ class Window(BaseWindow):
             'Settings':self.show_settings,'Import PS3 save':self.import_folder,'Import PC save':self.import_pc,
             'Archive health check':self.health_check,'Activity and tasks':self.activity,
             'Search archive':self.fast_search,'PS3 Console Center':self.ps3_center,
-            'GitHub Publishing Center':self.publisher_ui,'Backup history':self.show_history,
-            'Find PC saves':self.show_pc_discovery,'Dashboard layout':self.dashboard_preferences}
+            'GitHub Publishing Center':self.publisher_ui,
+            'Discover and import PC saves':self.show_pc_discovery,'Dashboard layout':self.dashboard_preferences}
     def open_palette(self):CommandPalette(self._commands(),self).exec()
     def activity(self):ActivityDialog(self.archive,self).exec()
     def fast_search(self):SearchDialog(self.archive,self).exec()

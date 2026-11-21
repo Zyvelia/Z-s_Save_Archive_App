@@ -26,7 +26,7 @@ def category_for(label: str) -> str:
         return 'Save Editing & Metadata'
     if any(w in name for w in ('tag','collection','pin','timeline','duplicate','name for selected','search all save','fast archive search','large library')):
         return 'Library & Organization'
-    if any(w in name for w in ('theme','appearance','density','dashboard','layout','settings','quick actions','activity','health','recovery','background jobs','verify','storage report','backup history','startup health')):
+    if any(w in name for w in ('theme','appearance','density','dashboard','layout','settings','quick actions','activity','health','recovery','background jobs','verify','storage report','startup health')):
         return 'Appearance & Maintenance'
     if any(w in name for w in ('backup','restore')):
         return 'PC Discovery & Backups'

@@ -8,6 +8,15 @@ from .storage import discover_saves, MAX_IMPORT_BYTES
 def steam_libraries():
     """Find installed Steam library directories on Windows, best effort, without registry edits."""
     candidates=[]
+    if os.name == 'nt':
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Valve\Steam') as key:
+                steam_path, _ = winreg.QueryValueEx(key, 'SteamPath')
+            if steam_path:
+                candidates.append(Path(steam_path))
+        except OSError:
+            pass
     for env in ('PROGRAMFILES(X86)','PROGRAMFILES'):
         p=os.environ.get(env)
         if p:candidates.append(Path(p)/'Steam')
@@ -35,7 +44,12 @@ def steam_games():
                 txt=acf.read_text(encoding='utf-8-sig',errors='replace')
                 name=re.search(r'"name"\s+"([^"]+)"',txt)
                 appid=re.search(r'"appid"\s+"(\d+)"',txt)
-                if name and appid:games.append({'name':name.group(1),'appid':appid.group(1),'library':str(lib)})
+                if name and appid:
+                    row = {'name': name.group(1), 'appid': appid.group(1), 'library': str(lib)}
+                    install = re.search(r'"installdir"\s+"([^"]+)"', txt)
+                    if install and re.fullmatch(r'[^/\\:]+', install[1]) and install[1] not in ('.', '..'):
+                        row['installation'] = str(appdir / 'common' / install[1])
+                    games.append(row)
             except OSError:pass
     return sorted(games,key=lambda r:r['name'].casefold())
 

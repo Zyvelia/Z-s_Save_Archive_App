@@ -26,9 +26,8 @@ class Window(ui.MainWindow):
         toolbar=QHBoxLayout()
         self.dashboard_btn=QPushButton('Dashboard');self.dashboard_btn.clicked.connect(self.show_dashboard)
         self.grid_btn=QPushButton('▦  Grid / List');self.grid_btn.clicked.connect(self.toggle_grid)
-        self.versions_btn=QPushButton('Backup History');self.versions_btn.clicked.connect(self.show_history)
         self.health_btn=QPushButton('Check Archive');self.health_btn.clicked.connect(self.health_check)
-        for b in (self.dashboard_btn,self.grid_btn,self.versions_btn,self.health_btn):toolbar.addWidget(b)
+        for b in (self.dashboard_btn,self.grid_btn,self.health_btn):toolbar.addWidget(b)
         toolbar.addStretch();ml.insertLayout(1,toolbar)
         # Reuse save detail form, adding visibility, screenshots, and history controls.
         savepage=self.stack.widget(1)
@@ -67,7 +66,7 @@ class Window(ui.MainWindow):
         self.game_list.setViewMode(QListWidget.ViewMode.ListMode)
         self.game_list.setIconSize(QSize(116,54))
         self.cover_cache={}
-        self.statusBar().showMessage('v0.3 • Local archive, backup history and PS3/PC tools ready')
+        self.statusBar().showMessage('v0.3 • Local archive and PS3/PC tools ready')
         self.show_dashboard()
 
     def toggle_grid(self):
@@ -186,12 +185,6 @@ class Window(ui.MainWindow):
             path=self.archive.make_backup(self.current['id']);self.statusBar().showMessage('Verified backup: '+str(path))
             QMessageBox.information(self,'Backup saved','Created versioned backup:\n'+str(path))
         except Exception as e:QMessageBox.warning(self,'Backup failed',str(e))
-
-    def show_history(self):
-        items=self.archive.backup_history(self.current['id'] if self.current else None)
-        if not items:QMessageBox.information(self,'Backup history','No versioned backups yet.');return
-        text='\n'.join(f"{i['created_at']} • {i['id'][:12]} • {'OK' if self.archive.verify_backup(i['id']) else 'CORRUPT'}" for i in items[:30])
-        QMessageBox.information(self,'Latest backup versions',text)
 
     def restore_selected(self):
         if not self.current:QMessageBox.information(self,'Restore','Select a save.');return

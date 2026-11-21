@@ -85,7 +85,7 @@ class AppDataDialog(QDialog):
 class Window(ExistingWindow):
     def __init__(self,root):
         super().__init__(root)
-        self.setWindowTitle("Z's Save Archive • v3.6.23")
+        self.setWindowTitle("Z's Save Archive • v3.6.24")
         self.resize(1540,930);self.setMinimumSize(1060,720)
         self.classic_content=self.takeCentralWidget()
         # All existing tools retain their QAction callbacks, even though the menu is hidden.
@@ -228,7 +228,7 @@ class Window(ExistingWindow):
             return
         self.shell_stack.setCurrentIndex(1)
         mapping={'games':('Game Library',self.show_games),'saves':('Saves & Backups',self.show_saves),
-                 'settings':('Settings',self.show_settings),'history':('Saves & Backups',self.show_history),
+                 'settings':('Settings',self.show_settings),
                  'ftp':('PS3 Console',self.show_ftp)}
         if which in mapping:
             label,handler=mapping[which];self._set_nav(label);handler()
@@ -260,7 +260,6 @@ class Window(ExistingWindow):
         if section=='Saves & Backups':
             row=QHBoxLayout()
             for label,fn in [('Browse Saves',lambda:self.open_classic('saves')),
-                             ('Backup History',lambda:self.open_classic('history')),
                              ('Import PS4 Save',self.import_ps4),('Import PC Save',self.import_pc)]:
                 b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(fn);row.addWidget(b)
             outer.addLayout(row)

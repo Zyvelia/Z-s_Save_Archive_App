@@ -34,10 +34,10 @@ class GameExitBackup(QDialog):
         super().__init__(parent);self.archive=archive;self.monitor=None
         self.setWindowTitle('Backup on game exit • opt-in session');self.resize(630,410)
         layout=QVBoxLayout(self)
-        layout.addWidget(QLabel('Windows only. Select a registered backup rule and enter the game executable name.\n'
+        layout.addWidget(QLabel('Windows only. Select a registered PC save folder and enter the game executable name.\n'
                                 'Monitoring runs only while this dialog is open. It never terminates the game.'))
-        self.choices=QComboBox();self.rules=archive.backup_rules()
-        for r in self.rules:self.choices.addItem(f"{r['game']} — {r['path']}",r['watch_id'])
+        self.choices=QComboBox();self.watched_folders=list(archive.conn.execute('SELECT id,game,path FROM local_watch_folders ORDER BY game'))
+        for r in self.watched_folders:self.choices.addItem(f"{r['game']} — {r['path']}",r['id'])
         layout.addWidget(self.choices)
         self.exe=QLineEdit();self.exe.setPlaceholderText('Example: Borderlands2.exe');layout.addWidget(self.exe)
         row=QHBoxLayout();layout.addLayout(row)
@@ -47,11 +47,10 @@ class GameExitBackup(QDialog):
         self.timer=QTimer(self);self.timer.setInterval(3000);self.timer.timeout.connect(self.tick)
         if sys.platform!='win32':self.start.setEnabled(False);self.output.setPlainText('Game-exit detection requires Windows.')
     def enable(self):
-        if self.choices.currentIndex()<0:return QMessageBox.warning(self,'Missing rule','Register a watched PC save folder first.')
+        if self.choices.currentIndex()<0:return QMessageBox.warning(self,'Missing folder','Register a watched PC save folder first.')
         name=self.exe.text().strip()
         if not name.lower().endswith('.exe'):return QMessageBox.warning(self,'Executable required','Enter a Windows executable basename ending in .exe.')
-        selected=self.rules[self.choices.currentIndex()]
-        if not selected['enabled']:return QMessageBox.warning(self,'Rule not enabled','Enable this backup rule in PC Discovery & Backups first.')
+        selected=self.watched_folders[self.choices.currentIndex()]
         def backup():
             try:
                 label='Game exit snapshot '+datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')

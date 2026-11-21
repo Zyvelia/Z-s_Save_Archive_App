@@ -9,15 +9,8 @@ class Window(BaseWindow):
         super().__init__(root)
         self.setWindowTitle("Z's Save Archive  •  PS3 + PC  v1.2")
         menu=self.tools_btn.menu();menu.addSeparator()
-        for title,func in [('Preview files before import',self.preview_ui),('Set workflow status',self.workflow_ui),('Archive storage report',self.storage_ui),('Inspect PS3 PARAM.SFO',self.sfo_ui),('Check restore destination',self.conflict_ui)]:
+        for title,func in [('Set workflow status',self.workflow_ui),('Archive storage report',self.storage_ui),('Inspect PS3 PARAM.SFO',self.sfo_ui),('Check restore destination',self.conflict_ui)]:
             menu.addAction(title,func)
-    def preview_ui(self):
-        def work():
-            path=QFileDialog.getExistingDirectory(self,'Choose save folder for read-only preview')
-            if path:
-                result=self.archive.preview_import(path)
-                QMessageBox.information(self,'Save preview',str(result)[:7000])
-        self._safe(work)
     def workflow_ui(self):
         sid=self._sid()
         if not sid:return

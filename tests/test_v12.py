@@ -20,7 +20,7 @@ class V12Tests(unittest.TestCase):
         self.assertEqual(self.archive.workflow_state(self.sid),'Testing')
         with self.assertRaises(ValueError):self.archive.set_workflow_state(self.sid,'unknown')
     def test_inspect(self):
-        x=self.archive.preview_import(self.save)
+        x=self.archive.inspect_archived(self.sid)
         self.assertEqual(x['file_count'],1)
         self.assertEqual(x['total_bytes'],3)
         self.assertEqual(self.archive.inspect_archived(self.sid)['file_count'],1)

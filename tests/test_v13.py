@@ -35,24 +35,6 @@ class V13Tests(unittest.TestCase):
     def test_xbox_candidates(self):
         p=self.base/'Packages'/'SomeGame'/'SystemAppData'/'wgs';p.mkdir(parents=True)
         self.assertEqual(len(self.a.xbox_candidates({'LOCALAPPDATA':str(self.base)})),1)
-    def test_cloud_warning(self):
-        out=self.a.cloud_restore_warning('C:/Steam/userdata/123','Steam')
-        self.assertFalse(out['safe_to_auto_restore']);self.assertGreater(len(out['warnings']),0)
-    def test_backup_rule_gate(self):
-        w=self.a.watch_folder_add('Test PC Game',self.source)
-        with self.assertRaises(ValueError):self.a.configure_backup_rule(w,min_interval=1)
-        self.assertEqual(self.a.run_backup_rules(),[])
-        self.a.configure_backup_rule(w,enabled=True,min_interval=60)
-        result=self.a.run_backup_rules(time_now=1000)
-        self.assertIn(result[0]['state'],('duplicate','imported'))
-        self.assertEqual(self.a.run_backup_rules(time_now=1001)[0]['state'],'interval')
-    def test_changed_snapshot(self):
-        w=self.a.watch_folder_add('Test PC Game',self.source)
-        self.a.configure_backup_rule(w,enabled=True,min_interval=60)
-        self.a.run_backup_rules(time_now=1000)
-        (self.source/'save.dat').write_bytes(b'B')
-        self.assertEqual(self.a.run_backup_rules(time_now=1061)[0]['state'],'imported')
-        self.assertEqual(len(self.a.list_saves()),2)
     def test_verify_archive(self):
         self.assertTrue(self.a.verify_all_saves()[0]['valid'])
         stored=self.a.root/self.a._save(self.sid)['stored_path']
@@ -73,12 +55,6 @@ class V13Tests(unittest.TestCase):
         self.a.notification('info','Test')
         self.assertEqual(self.a.notifications()[0]['message'],'Test')
         self.assertTrue(self.a.archive_health()['sqlite_ok'])
-    def test_no_auto_delete_on_retention(self):
-        w=self.a.watch_folder_add('Test PC Game',self.source)
-        self.a.configure_backup_rule(w,enabled=True,keep_latest=1)
-        self.assertEqual(self.a.backup_rules()[0]['keep_latest'],1)
-        self.assertEqual(len(self.a.list_saves()),1)
-
 if __name__=='__main__':unittest.main()
 
 class V13LibraryTests(unittest.TestCase):

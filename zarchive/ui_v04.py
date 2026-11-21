@@ -78,16 +78,16 @@ class Window(PreviousWindow):
 
     def _tidy_toolbar(self):
         # Keep frequent actions visible; group the remainder in a menu instead of 12 cramped buttons.
-        for b in (self.versions_btn,self.health_btn,self.bulk_btn,self.bulk_tag_btn,
+        for b in (self.health_btn,self.bulk_btn,self.bulk_tag_btn,
                   self.tagcolors_btn,self.theme_btn,self.collections_btn,self.steam_btn,self.ftp_btn):
             b.hide()
         self.grid_btn.setText('▦  Grid / List')
         self.tools_btn=QPushButton('Tools  ▾')
         menu=QMenu(self)
         for label,callback in (
-            ('Backup history',self.show_history),('Bulk ZIP backups',self.bulk_backup),
+            ('Bulk ZIP backups',self.bulk_backup),
             ('Bulk tagging',self.bulk_tags),('Tag colors',self.edit_tag_color),
-            ('Collections',self.show_collections),('Find PC saves',self.show_pc_discovery),
+            ('Collections',self.show_collections),
             ('PS3 FTP',self.show_ftp),('Archive health',self.health_check),
             ('Appearance',self.choose_theme)):
             action=menu.addAction(label);action.triggered.connect(callback)
@@ -115,7 +115,7 @@ class Window(PreviousWindow):
         quick=QFrame();quick.setObjectName('quickPanel');ql=QVBoxLayout(quick);ql.setContentsMargins(18,17,18,17);ql.setSpacing(11)
         ql.addWidget(section('Quick actions'))
         for text,fn in [('＋  Import PS3 saves',self.import_folder),('＋  Import PC saves',self.import_pc),
-                        ('▦  Browse game library',self.show_games),('◷  Backup history',self.show_history),
+                        ('▦  Browse game library',self.show_games),
                         ('✓  Check archive',self.health_check)]:
             b=QPushButton(text);b.clicked.connect(fn);ql.addWidget(b)
         self.disk_label=ui.label('',11,True);ql.addWidget(self.disk_label);ql.addStretch()

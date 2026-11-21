@@ -2,8 +2,7 @@
 No console writes, cloud synchronization or background timers.
 """
 from __future__ import annotations
-import hashlib, json, os, re, shutil, sqlite3, tempfile, time, uuid
-from datetime import datetime, timezone
+import hashlib, json, os, re, shutil, sqlite3, tempfile, uuid
 from pathlib import Path
 from .upgrade_v12 import ArchiveV12
 from .storage import folder_digest, now
@@ -47,7 +46,6 @@ class ArchiveV13(ArchiveV12):
         super().__init__(root)
         self.conn.executescript('''
         CREATE TABLE IF NOT EXISTS custom_game_paths(id TEXT PRIMARY KEY, game TEXT NOT NULL, source TEXT NOT NULL, location TEXT NOT NULL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS pc_backup_rules(watch_id TEXT PRIMARY KEY REFERENCES local_watch_folders(id) ON DELETE CASCADE, enabled INTEGER NOT NULL DEFAULT 0, min_interval INTEGER NOT NULL DEFAULT 300, keep_latest INTEGER NOT NULL DEFAULT 0, last_backup REAL NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS mirror_runs(id TEXT PRIMARY KEY, destination TEXT NOT NULL, created_at TEXT NOT NULL, sha256 TEXT NOT NULL, files INTEGER NOT NULL, bytes INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS discovery_definitions(game TEXT NOT NULL, platform TEXT NOT NULL, template TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY(game,platform,template));
         CREATE TABLE IF NOT EXISTS discovery_events(id TEXT PRIMARY KEY, created_at TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL);
@@ -143,51 +141,6 @@ class ArchiveV13(ArchiveV12):
                     q=p/child
                     if q.is_dir() and not q.is_symlink():found.append({'package':p.name,'candidate':str(q),'confirmed_save':False});break
         return found
-
-    def cloud_restore_warning(self,path,launcher=None):
-        s=str(Path(path)).lower().replace('\\','/')
-        warnings=[]
-        if launcher in ('Steam','Epic','GOG','Xbox'):warnings.append(f'{launcher} may restore or overwrite local data through cloud sync; verify synchronization settings first')
-        if '/steam/userdata/' in s or '/steamapps/' in s:warnings.append('Steam-related location: close game and Steam cloud synchronization before restoring')
-        if '/onedrive/' in s:warnings.append('OneDrive-synchronized path: cloud conflicts are possible')
-        if '/packages/' in s and '/systemappdata/' in s:warnings.append('Xbox/Store container: permissions and account bindings may restrict restoring')
-        return {'safe_to_auto_restore':False,'warnings':warnings or ['Cloud status cannot be confirmed; check launcher and game before restoring']}
-
-    def configure_backup_rule(self,watch_id,*,enabled=False,min_interval=300,keep_latest=0):
-        if type(min_interval)!=int or not 60<=min_interval<=86400*30:raise ValueError('Interval must be 60 seconds to 30 days')
-        if type(keep_latest)!=int or not 0<=keep_latest<=100:raise ValueError('Retention target must be 0–100 (advisory only)')
-        if not self.conn.execute('SELECT 1 FROM local_watch_folders WHERE id=?',(watch_id,)).fetchone():raise ValueError('Unknown watched folder')
-        with self.conn:self.conn.execute('''INSERT INTO pc_backup_rules(watch_id,enabled,min_interval,keep_latest) VALUES (?,?,?,?)
-        ON CONFLICT(watch_id) DO UPDATE SET enabled=excluded.enabled,min_interval=excluded.min_interval,keep_latest=excluded.keep_latest''',(watch_id,int(enabled),min_interval,keep_latest))
-
-    def backup_rules(self):
-        return [dict(r) for r in self.conn.execute('''SELECT r.*,w.game,w.path FROM pc_backup_rules r JOIN local_watch_folders w ON w.id=r.watch_id ORDER BY w.game''')]
-
-    def run_backup_rules(self,*,time_now=None):
-        """Run once only on user request or external scheduler; never delete old backups."""
-        current=time.time() if time_now is None else float(time_now)
-        results=[]
-        for rule in self.backup_rules():
-            if not rule['enabled']:continue
-            if current-rule['last_backup']<rule['min_interval']:
-                results.append({'game':rule['game'],'state':'interval'});continue
-            src=Path(rule['path'])
-            try:
-                if not src.is_dir() or src.is_symlink() or src.resolve().is_relative_to(self.root):raise ValueError('Folder missing or unsafe')
-                digest,_,_=folder_digest(src)
-                row=self.conn.execute('SELECT last_digest FROM local_watch_folders WHERE id=?',(rule['watch_id'],)).fetchone()
-                if row['last_digest']==digest:state='unchanged'
-                else:
-                    try:self.import_pc_save(src,rule['game'],label='Rule snapshot '+now());state='imported'
-                    except ValueError as exc:
-                        if 'duplicate' not in str(exc).lower():raise
-                        state='duplicate'
-                with self.conn:
-                    self.conn.execute('UPDATE local_watch_folders SET last_digest=?,last_checked=? WHERE id=?',(digest,now(),rule['watch_id']))
-                    self.conn.execute('UPDATE pc_backup_rules SET last_backup=? WHERE watch_id=?',(current,rule['watch_id']))
-                results.append({'game':rule['game'],'state':state})
-            except Exception as exc:results.append({'game':rule['game'],'state':'error','detail':str(exc)[:200]})
-        return results
 
     def verify_all_saves(self,limit=2000):
         if type(limit)!=int or not 1<=limit<=20000:raise ValueError('Invalid limit')
