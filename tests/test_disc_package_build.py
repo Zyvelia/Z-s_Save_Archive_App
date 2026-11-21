@@ -1,4 +1,6 @@
 import subprocess
+import base64
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -85,31 +87,44 @@ class DiscPackageBuildTests(unittest.TestCase):
             kit = root / 'Retail2Pkg.zip'
             with ZipFile(kit, 'w') as archive:
                 for name in REQUIRED_FILES:
-                    archive.writestr(f'Retail2Pkg/{name}', name.encode())
-            extractor = root / '7z.exe'
-            extractor.touch()
-            output = root / 'output'
+                    archive.writestr(f'Retail2Pkg ISO Launcher/Retail2Pkg/{name}', name.encode())
+            output = root / 'output [games] & more'
             output.mkdir()
 
-            def extract(command, cancelled, progress, extraction_progress):
-                self.assertIn('-bsp1', command)
-                self.assertIn('-ir!PS3_GAME', command)
-                extracted = Path(next(item[2:] for item in command if item.startswith('-o')))
-                game = extracted / 'Disc Backup' / 'PS3_GAME'
+            def extract(command, *, env, **kwargs):
+                self.assertEqual(Path(env['ZARCHIVE_DISC_ISO']), iso)
+                self.assertEqual(command[-2], '-EncodedCommand')
+                script = base64.b64decode(command[-1]).decode('utf-16-le')
+                self.assertIn('Mount-DiskImage -ImagePath $iso -Access ReadOnly', script)
+                self.assertIn('Dismount-DiskImage -ImagePath $iso', script)
+                self.assertIn('/A-:R', script)
+                self.assertIn('$_.IsReadOnly = $false', script)
+                game = Path(env['ZARCHIVE_DISC_GAME'])
+                self.assertEqual(game.parent.parent, output)
                 game.mkdir(parents=True)
                 write_sfo(game / 'PARAM.SFO')
+                return SimpleNamespace(returncode=1, stdout='Mock extraction error', stderr='') if native_failure else SimpleNamespace(returncode=0, stdout='', stderr='')
 
             def batch(command, cwd, **kwargs):
                 self.assertEqual(command[-1], 'Retail2Pkg.bat')
-                self.assertEqual((cwd / 'Retail2Pkg.bat').read_bytes(), b'Retail2Pkg.bat')
+                self.assertIn(b'CFW2OFW_Helper.exe || goto conversionfailure',
+                              (cwd / 'Retail2Pkg.bat').read_bytes())
                 self.assertTrue((cwd / 'PS3_GAME' / 'PARAM.SFO').is_file())
                 (cwd / 'Disc.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
                 (cwd / 'patch').mkdir()
                 (cwd / 'patch' / 'Downloaded.pkg').write_bytes(b'\x7fPKG' + b'x' * 100)
                 return SimpleNamespace(returncode=0, stdout='', stderr='')
 
-            with patch('zarchive.iso_converter_v20.extract_iso', side_effect=extract):
-                result = build_pkgs_locally(iso, kit, output, extractor=extractor, runner=batch)
+            old_hash = hashlib.sha256(b'Retail2Pkg.bat').hexdigest()
+            native_failure = False
+            with patch('zarchive.windows_iso.subprocess.run', side_effect=extract), \
+                 patch('zarchive.retail2pkg_v31.PREVIOUS_BATCHES', {old_hash}):
+                result = build_pkgs_locally(iso, kit, output, runner=batch)
             self.assertTrue(result['success'])
             self.assertEqual(result['packages'], [str(output / 'Disc.pkg')])
             self.assertFalse((output / 'Downloaded.pkg').exists())
+
+            native_failure = True
+            with patch('zarchive.windows_iso.subprocess.run', side_effect=extract):
+                with self.assertRaisesRegex(RuntimeError, 'Mock extraction error'):
+                    build_pkgs_locally(iso, kit, output, runner=batch)

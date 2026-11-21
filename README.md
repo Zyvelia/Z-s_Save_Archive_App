@@ -87,7 +87,9 @@ Open **PS3 PKG Inspect and Upload** to inspect an existing package or upload it 
 
 ### Build a PKG from a PS3 disc ISO
 
-Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose the disc ISO, your Retail2Pkg folder or ZIP, and the output folder. Click **Extract ISO and build PKGs**. Leave **ISO extractor** blank to use 7-Zip with a percentage, or browse to `WinRAR.exe` to use WinRAR with elapsed-time updates. The app locates `PS3_GAME` and puts it beside `Retail2Pkg.bat` in a fresh working folder. The app displays the batch log and live patch download progress. Use the Windows console for input prompts. The app copies the resulting packages to your output folder.
+Open **PS3 Tools → ISO → PKG (Retail2Pkg)**. Choose a readable, decrypted PS3 disc ISO, your Retail2Pkg folder or ZIP, and an output folder on a local drive. Click **Extract ISO and build PKGs**. Windows mounts the ISO read-only, copies `PS3_GAME` to a fresh working folder, and makes the copied files writable for Retail2Pkg. This workflow uses Windows and Robocopy. The separate XMB Assistant still supports 7-Zip and WinRAR.
+
+Watch the build log in Save Archive and use the Windows console if the helper asks for input. If PS3Merge opens, select the working folder shown in the log. The app copies valid packages to your output folder after a successful batch run. If the toolkit reports `MSVCR120.dll` missing, install the [Visual C++ 2013 Redistributable (x86)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#visual-studio-2013-vc-120), including on 64-bit Windows.
 
 ### PS3 Stats homebrew
 

@@ -5,6 +5,7 @@ the batch file renames, moves, and deletes directories. Prepare a separate copy
 instead and run the batch there after user confirmation.
 """
 from __future__ import annotations
+import hashlib
 import os
 from time import monotonic
 from types import SimpleNamespace
@@ -15,15 +16,24 @@ import uuid
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from zipfile import ZipFile
+from .app_assets import asset_path
 from .converter_output_v21 import validate_pkg
-from .iso_converter_v20 import stage_conversion
+from .iso_converter_v20 import inspect_game
+from .windows_iso import copy_iso_game
 
 REQUIRED_FILES = (
     'CFW2OFW_Helper.exe', 'Retail2Pkg.bat', 'makepkg1.exe',
     'makepkg2.exe', 'make_npdata.exe', 'PS3Merge.exe',
     'Karmian.Core.dll', 'Karmian.Framework.dll', 'EmList.json',
 )
-OPTIONAL_FILES = ('CFW2OFW_settings.ini', 'PS3Merge.exe.Config')
+OPTIONAL_FILES = ('CFW2OFW_settings.ini', 'PS3Merge.exe.Config', 'MSVCR120.dll')
+LAUNCHER_BATCH = 'Retail2Pkg_launcher.bat'
+# The original toolkit and the first standalone launcher both omitted the
+# helper's failure check. Leave other user-supplied batch variants untouched.
+PREVIOUS_BATCHES = {
+    'b6b84b399e1a97e7dbe88f87caf20352d4982bdde7119a273788a77f0004fafc',
+    'b54937260c30310ddc25ad1c972aeceb9e5a81cb0ba34c4944915584850faea0',
+}
 
 
 def inspect_retail2pkg_folder(folder: str | Path) -> dict:
@@ -44,7 +54,7 @@ def inspect_retail2pkg_folder(folder: str | Path) -> dict:
 
 
 def unpack_retail2pkg_kit(package: Path, destination: Path) -> None:
-    """Copy tool files from a ZIP root or a single enclosing toolkit folder."""
+    """Copy tool files from an original toolkit ZIP or a standalone launcher ZIP."""
     names = {name.casefold(): name for name in (*REQUIRED_FILES, *OPTIONAL_FILES)}
     with ZipFile(package) as archive:
         tools = {}
@@ -52,8 +62,9 @@ def unpack_retail2pkg_kit(package: Path, destination: Path) -> None:
             path = PurePosixPath(member.filename)
             if member.is_dir() or path.name.casefold() not in names:
                 continue
-            if path.is_absolute() or '..' in path.parts or len(path.parts) > 2:
-                raise ValueError('Expected Retail2Pkg files at the ZIP root or in one toolkit folder.')
+            launcher_layout = path.parts[:2] == ('Retail2Pkg ISO Launcher', 'Retail2Pkg')
+            if path.is_absolute() or '..' in path.parts or len(path.parts) > (3 if launcher_layout else 2):
+                raise ValueError('Expected the original Retail2Pkg ZIP or the Retail2Pkg ISO Launcher ZIP.')
             entries = tools.setdefault(path.parent, {})
             name = names[path.name.casefold()]
             if name in entries or member.file_size > 64 * 1024**2:
@@ -81,7 +92,7 @@ def _batch_working_directory(stage: Path) -> Path:
 
 
 def prepare_local_batch(iso_path: str | Path, tool_folder: str | Path,
-                        output_folder: str | Path, *, extractor=None, progress=None,
+                        output_folder: str | Path, *, progress=None,
                         extraction_progress=None) -> Path:
     """Extract disc data beside a fresh copy of the selected batch and tools."""
     def report(label, path):
@@ -98,20 +109,34 @@ def prepare_local_batch(iso_path: str | Path, tool_folder: str | Path,
         report('Unpacking toolkit', kit)
         with TemporaryDirectory(prefix='retail2pkg-kit-') as scratch:
             unpack_retail2pkg_kit(kit, Path(scratch))
-            return prepare_local_batch(source, scratch, output_folder, extractor=extractor,
+            return prepare_local_batch(source, scratch, output_folder,
                                        progress=progress, extraction_progress=extraction_progress)
     toolkit = inspect_retail2pkg_folder(kit)
     report('Checking output folder', output_folder)
     output = Path(output_folder).expanduser().resolve(strict=True)
     if not output.is_dir() or output == kit or kit in output.parents or output in kit.parents:
         raise ValueError('Choose an existing output folder separate from the toolkit directory.')
+    if str(output).startswith('\\\\'):
+        raise ValueError('Choose an output folder on a local drive so Retail2Pkg can use it.')
     stage = output / ('Retail2Pkg_Build_' + uuid.uuid4().hex[:12])
     report('Working folder', stage)
-    stage_conversion(source, toolkit['helper'], stage, extractor=extractor, progress=progress,
-                     extraction_progress=extraction_progress)
-    for name in ('PS3_GAME/PARAM.SFO', 'CFW2OFW_Helper.exe', 'Retail2Pkg.bat'):
-        if not (stage / name).is_file():
-            raise ValueError(f'Missing {name} in {stage}.')
+    stage.mkdir()
+    try:
+        for name in toolkit['files']:
+            shutil.copyfile(kit / name, stage / name)
+        batch = stage / 'Retail2Pkg.bat'
+        batch_hash = hashlib.sha256(batch.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+        if batch_hash in PREVIOUS_BATCHES:
+            updated = asset_path(LAUNCHER_BATCH).read_bytes().splitlines()
+            batch.write_bytes(b'\r\n'.join(updated) + b'\r\n')
+            report('Using the updated Retail2Pkg batch in the working folder', batch)
+
+        game = stage / 'PS3_GAME'
+        copy_iso_game(source, game, progress=progress, extraction_progress=extraction_progress)
+        info = inspect_game(game)
+        report('Game found', f"{info['title']} [{info['title_id']}]")
+    except Exception as exc:
+        raise RuntimeError(f'{exc}\nWorking folder: {stage}') from exc
     report('PS3_GAME is beside Retail2Pkg.bat', stage)
     return stage
 
@@ -167,16 +192,20 @@ def stream_batch_log(process, log_path: Path, timeout: int, *, progress, console
 
 
 def run_windows_batch(stage, timeout, progress, console_status):
-    working_dir = _batch_working_directory(stage)
+    staged_lines = (stage / 'Retail2Pkg.bat').read_bytes().splitlines()
+    launcher_lines = asset_path(LAUNCHER_BATCH).read_bytes().splitlines()
+    launcher_batch = [line.rstrip() for line in staged_lines] == launcher_lines
+    working_dir = stage if launcher_batch else _batch_working_directory(stage)
     env = dict(os.environ)
     env['PATH'] = str(working_dir) + os.pathsep + env.get('PATH', '')
     log_name = f'Retail2Pkg_{uuid.uuid4().hex[:8]}.log'
     log_path = stage / log_name
     log_path.touch(exist_ok=False)
-    command = ['cmd.exe', '/d', '/s', '/c',
+    batch_argument = ' /launcher' if launcher_batch else ''
+    command = ['cmd.exe', '/d', '/v:off', '/s', '/c',
                'title Retail2Pkg - Watch the log in Save Archive'
                ' & echo Watch the log in Save Archive. Use this window for input prompts.'
-               rf' & call .\Retail2Pkg.bat > {log_name} 2>&1']
+               rf' & call .\Retail2Pkg.bat{batch_argument} > {log_name} 2>&1']
     # Redirect inside cmd so Windows still gives the new console a keyboard.
     with subprocess.Popen(command, cwd=working_dir, env=env,
                           creationflags=subprocess.CREATE_NEW_CONSOLE) as process:
@@ -191,7 +220,7 @@ def run_windows_batch(stage, timeout, progress, console_status):
 
 def build_pkgs_locally(iso_path: str | Path, tool_folder: str | Path,
                        output_folder: str | Path, *, timeout: int = 7200,
-                       runner=None, extractor: str | Path | None = None, progress=None, extraction_progress=None, console_status=None) -> dict:
+                       runner=None, progress=None, extraction_progress=None, console_status=None) -> dict:
     """Run the chosen Retail2Pkg batch on an isolated copy of disc input.
 
     This is an explicit opt-in to execute the user's third-party batch file.
@@ -200,7 +229,7 @@ def build_pkgs_locally(iso_path: str | Path, tool_folder: str | Path,
     """
     if sys.platform != 'win32' and runner is None:
         raise OSError('Retail2Pkg batch execution requires Windows')
-    stage = prepare_local_batch(iso_path, tool_folder, output_folder, extractor=extractor,
+    stage = prepare_local_batch(iso_path, tool_folder, output_folder,
                                 progress=progress, extraction_progress=extraction_progress)
     output = stage.parent
     previous_packages = {path for path in stage.rglob('*') if path.suffix.lower() == '.pkg'}
