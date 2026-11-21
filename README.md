@@ -97,6 +97,15 @@ The standalone XMB app shows CELL and RSX temperatures when enabled. Version 1.3
 
 Download the [Save Archive v3.6.14 desktop source ZIP](downloads/Z_Save_Archive_v3.6.14_Source.zip). The [downloads folder](downloads/) also contains the PS3 homebrew packages and SHA-256 checksums.
 
+### GitHub Manager
+
+Open **Releases → GitHub Manager**. Install [Git for Windows](https://git-scm.com/install/windows) and [GitHub CLI](https://cli.github.com/), then use **Sign in** and **Check sign-in**. Save Archive uses GitHub CLI authentication.
+
+- **Publish source** sends the selected Git checkout's committed history or a snapshot of an extracted Save Archive source folder. The destination can be an existing repository or a new one. Select the snapshot option to include current edits without committing them in your local checkout. A snapshot uploads the app files and leaves local archive data on your computer. Git rejects pushes that would overwrite destination history.
+- **Download repository bundle** makes a local copy of the repository's Git branches and tags while the original repository is accessible. **Save Git bundle** backs up a local checkout. To recover to another repository, select the bundle under **Source**, choose the new repository, and enable **Publish all local branches and tags**. Git bundles contain Git history. GitHub issues, pull requests, and release assets are stored separately.
+- **Upload backup ZIP** attaches a file you choose to a draft release in a private repository. Use the same option to upload a previously downloaded backup to a new private repository. The app leaves your live save archive on your computer.
+- **Remember repository** sets the destination in the existing GitHub Publishing Center.
+
 ### Update the Windows source folder
 
 Close Save Archive and double-click **Update_Archive.bat** in the source folder. The updater downloads the desktop ZIP listed in `downloads/SHA256SUMS.txt`, checks its SHA-256, and updates the source in place. It leaves archive data and local settings alone. Previous copies of changed source files go into `.update-backups`.

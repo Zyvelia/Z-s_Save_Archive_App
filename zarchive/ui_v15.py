@@ -63,8 +63,12 @@ class Window(BaseWindow):
         super().__init__(root);self.setWindowTitle("Z's Save Archive  •  PS3 + PC  v1.5")
         menu=self.tools_btn.menu();menu.addSeparator()
         menu.addAction('GitHub Publishing Center',self.publisher_ui)
+        menu.addAction('GitHub Manager', self.github_manager_ui)
         menu.addAction('Pre-release validation for selected save',self.preflight_ui)
         menu.addAction('Generate public website',self.website_ui)
+    def github_manager_ui(self):
+        from .ui_github_manager import GitHubManagerDialog
+        GitHubManagerDialog(self.archive, self).exec()
     def publisher_ui(self):self._safe(lambda:PublisherDialog(self.archive,self).exec())
     def preflight_ui(self):
         sid=self._sid()
