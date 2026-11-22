@@ -1,5 +1,6 @@
 from pathlib import Path
 import struct
+from types import SimpleNamespace
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -9,7 +10,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 from zarchive.ps4_fpkg import (
-    build_packages, inspect_dump, run_orbis, scan_build_inputs, scan_dumps,
+    build_packages, check_batch, inspect_dump, run_orbis, scan_build_inputs, scan_dumps,
     validate_package, write_gp4,
 )
 
@@ -305,6 +306,98 @@ class FpkgTests(unittest.TestCase):
 
         build_packages([base], self.tool, self.output, nearby_gp4s=projects, log=messages.append, runner=build)
         self.assertTrue(any('Generating a GP4' in message for message in messages))
+
+    def test_resume_verifies_existing_base_and_builds_only_unfinished_patch(self):
+        base, update = map(inspect_dump, (self.base, self.update))
+        calls = []
+
+        def build(tool, project, output, log, progress, cancelled):
+            gp4 = ET.parse(project)
+            volume = gp4.findtext('volume/volume_type')
+            calls.append(volume)
+            if volume == 'pkg_ps4_app':
+                make_package(output, self.base)
+            else:
+                if len(calls) == 2:
+                    raise RuntimeError('simulated interruption')
+                base_path = gp4.find('volume/package').get('app_path')
+                self.assertEqual(Path(base_path), original)
+                make_package(output, self.update)
+
+        with self.assertRaisesRegex(RuntimeError, 'simulated interruption'):
+            build_packages([base, update], self.tool, self.output, runner=build)
+        original, = self.output.rglob('*.pkg')
+        original_data = original.read_bytes()
+        ready = build_packages([base, update], self.tool, self.output, resume=True, runner=build)
+        self.assertEqual(calls, ['pkg_ps4_app', 'pkg_ps4_patch', 'pkg_ps4_patch'])
+        self.assertEqual(ready[0], original)
+        self.assertEqual(original.read_bytes(), original_data)
+        self.assertEqual(len(ready), 2)
+
+    def test_resume_refuses_wrong_versions_or_patch_when_base_needs_rebuild(self):
+        base, update = map(inspect_dump, (self.base, self.update))
+
+        def build(tool, project, output, log, progress, cancelled):
+            volume = ET.parse(project).findtext('volume/volume_type')
+            make_package(output, self.base if volume == 'pkg_ps4_app' else self.update)
+
+        base_output, _ = build_packages([base, update], self.tool, self.output, runner=build)
+        make_package(base_output, self.update)
+        with self.assertRaisesRegex(ValueError, 'Cannot resume'):
+            build_packages([base, update], self.tool, self.output, resume=True, runner=build)
+        wrong_version = make_dump(self.root / 'wrong-version', 'gd', APP_VER='03.00')
+        make_package(base_output, wrong_version)
+        with self.assertRaisesRegex(ValueError, 'version does not match'):
+            build_packages([base, update], self.tool, self.output, resume=True, runner=build)
+        base_output.unlink()
+        with self.assertRaisesRegex(ValueError, 'base needs to be rebuilt'):
+            build_packages([base, update], self.tool, self.output, resume=True, runner=build)
+
+    def test_preflight_checks_helper_disk_space_and_fat32_limit(self):
+        base = inspect_dump(self.base)
+        with self.assertRaisesRegex(ValueError, 'sc.exe'):
+            check_batch([base], self.tool, self.output)
+        helper = self.tool.parent / 'ext' / 'sc.exe'
+        helper.parent.mkdir()
+        helper.write_bytes(b'MZ')
+        with (patch('zarchive.ps4_fpkg.FAT32_FILE_LIMIT', 1),
+              patch('zarchive.ps4_fpkg.shutil.disk_usage', return_value=SimpleNamespace(free=0))):
+            pending, reused, required, free, warnings = check_batch(
+                [base], self.tool, self.output, filesystem='FAT32',
+            )
+            self.assertEqual((pending, reused, free), (1, 0, 0))
+            self.assertGreater(required, 0)
+            self.assertTrue(any('FAT32' in warning for warning in warnings))
+            self.assertTrue(any('GiB free' in warning for warning in warnings))
+            with self.assertRaisesRegex(ValueError, 'FAT32'):
+                build_packages([base], self.tool, self.output, filesystem='FAT32', runner=self.fail)
+
+    def test_row_gp4_override_coexists_with_automatic_and_generated_projects(self):
+        base, update, dlc = map(inspect_dump, (self.base, self.update, self.dlc))
+        manual = self.root / 'manual.gp4'
+        automatic = self.root / 'automatic.gp4'
+        ignored = self.root / 'ignored.gp4'
+        write_gp4(base, manual, storage_type='bd50')
+        write_gp4(update, automatic, base_package=self.root / 'older.pkg', storage_type='bd50')
+        write_gp4(dlc, ignored)
+        messages = []
+
+        def build(tool, project, output, log, progress, cancelled):
+            volume = ET.parse(project).findtext('volume/volume_type')
+            source, content_id = {
+                'pkg_ps4_app': (self.base, BASE_ID),
+                'pkg_ps4_patch': (self.update, BASE_ID),
+                'pkg_ps4_ac_nodata': (self.dlc, DLC_ID),
+            }[volume]
+            make_package(output, source, content_id=content_id)
+
+        ready = build_packages([base, update, dlc], self.tool, self.output, runner=build,
+                               nearby_gp4s={self.update: automatic, self.dlc: ignored},
+                               row_gp4s={self.base: manual, self.dlc: None}, log=messages.append)
+        self.assertEqual(len(ready), 3)
+        self.assertIn(f'Using selected GP4: {manual}', messages)
+        self.assertIn(f'Using existing GP4: {automatic}', messages)
+        self.assertNotIn(f'Using existing GP4: {ignored}', messages)
 
     def test_orbis_streams_progress_and_reports_exit_code(self):
         start = subprocess.Popen

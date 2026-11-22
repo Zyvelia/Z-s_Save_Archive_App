@@ -14,7 +14,7 @@ from .appdata_v34 import AppPaths
 from .ui_ps4_fpkg import FpkgPanel
 from .removable_drives import remembered_drive, removable_drives
 from .storage import CHECKPOINT_KINDS
-from .ui_artwork import GameArtwork
+from .ui_artwork import ArtworkPicker, GameArtwork
 from .ui_preferences import InterfaceTextSize, choose_sort, edit_shortcuts, sorted_by, valid_sort
 from .ui_v16 import CommandPalette
 from .navigation_v30 import classify_action, collect_legacy_actions, DEFAULT_ACTIONS, is_advanced_action
@@ -735,10 +735,13 @@ class Window(ExistingWindow):
         menu.exec(self.home_game_list.viewport().mapToGlobal(position))
 
     def choose_game_art(self, game):
-        path, _ = QFileDialog.getOpenFileName(self, 'Choose game art', '', 'Images (*.png *.jpg *.jpeg *.webp)')
-        if path:
+        picker = ArtworkPicker(self.artwork, game['game'], game['platform'], self)
+        result = picker.exec()
+        chosen = picker.chosen
+        picker.deleteLater()
+        if result == QDialog.DialogCode.Accepted and chosen:
             try:
-                self.artwork.assign(game['game'], game['platform'], path)
+                self.artwork.assign(game['game'], game['platform'], chosen)
             except (OSError, ValueError) as error:
                 QMessageBox.warning(self, 'Could not save game art', str(error))
 

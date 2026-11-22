@@ -8,9 +8,10 @@ from zarchive.editor_v18 import ArchiveV18
 from zarchive.removable_drives import RemovableDrive, remembered_drive
 
 try:
+    from zarchive.ui_artwork import steam_app_id
     from zarchive.ui_preferences import sorted_by, valid_sort
 except ImportError:
-    sorted_by = None
+    sorted_by = steam_app_id = None
 
 
 class ArchiveUsabilityTests(unittest.TestCase):
@@ -58,3 +59,11 @@ class ArchiveUsabilityTests(unittest.TestCase):
         self.assertEqual(sorted_by(rows, order, lambda row, field: row[columns[field]]),
                          [('A', (1, 10)), ('A', (1, 9)), ('B', (2, 0)), ('B', (1, 0))])
         self.assertEqual(valid_sort([['Game', True], ['Game', False]], columns, order), order)
+
+    @unittest.skipIf(steam_app_id is None, 'PySide6 is required for the artwork picker')
+    def test_steam_artwork_uses_only_app_ids_and_official_store_links(self):
+        self.assertEqual(steam_app_id('1285190'), '1285190')
+        self.assertEqual(steam_app_id('https://store.steampowered.com/app/1285190/Borderlands_4/'), '1285190')
+        self.assertIsNone(steam_app_id('https://store.steampowered.com.evil.test/app/1285190'))
+        self.assertIsNone(steam_app_id('https://store.steampowered.com/bundle/1285190'))
+        self.assertIsNone(steam_app_id('1285190/../../image'))

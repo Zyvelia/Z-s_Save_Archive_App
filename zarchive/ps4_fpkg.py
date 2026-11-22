@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from queue import Empty, Full, Queue
 import re
+import shutil
 import struct
 import subprocess
 from tempfile import TemporaryDirectory
@@ -25,6 +26,7 @@ CONTENT_ID = re.compile(r'[A-Z]{2}[0-9]{4}-(CUSA[0-9]{5})_[0-9]{2}-[A-Z0-9_]{16}
 VERSION = re.compile(r'[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}')
 PASSCODE = '0' * 32
 ABOUT_DIRECTORY = 'sce_sys/about'
+FAT32_FILE_LIMIT = (1 << 32) - 1
 EXCLUDED = {'sce_sys/playgo-chunk.dat', 'sce_sys/playgo-chunk.sha',
             'sce_sys/playgo-manifest.xml', '.complete', '.dumping', 'dump.log'}
 
@@ -120,17 +122,27 @@ def scan_dumps(source, cancelled=lambda: False):
     return sorted(dumps, key=lambda dump: (dump.title_id, dump.category, dump.title, str(dump.path))), errors
 
 
-def validate_tool(executable):
+def validate_tool(executable, *, require_helpers=False):
     path = long_path(executable)
     if path.name.casefold() != 'orbis-pub-cmd.exe' or not path.is_file():
         raise ValueError('Select an existing orbis-pub-cmd.exe.')
     with path.open('rb') as stream:
         if stream.read(2) != b'MZ':
             raise ValueError('The selected tool is not a Windows executable.')
+    if require_helpers:
+        helper = path.parent / 'ext' / 'sc.exe'
+        try:
+            with helper.open('rb') as stream:
+                valid_helper = stream.read(2) == b'MZ'
+        except OSError:
+            valid_helper = False
+        if not valid_helper:
+            raise ValueError(f'Missing or unreadable publishing helper: {helper}. '
+                             'Extract the complete matching publishing tools bundle and reselect orbis-pub-cmd.exe.')
     return path
 
 
-def validate_package(path, *, expected_content_id=None, expected_category=None):
+def validate_package(path, *, expected_content_id=None, expected_category=None, expected_version=None):
     """Check package bounds and read its identity from the header and embedded SFO."""
     path = long_path(path)
     if _linked(path) or not path.is_file():
@@ -172,6 +184,10 @@ def validate_package(path, *, expected_content_id=None, expected_category=None):
         raise ValueError(f'PS4 PKG content ID does not match: {path.name} ({content_id})')
     if expected_category and fields.get('CATEGORY', '').lower() != expected_category:
         raise ValueError(f'Expected a {CATEGORIES[expected_category].lower()} PS4 package: {path.name}')
+    if expected_version:
+        version = fields.get('APP_VER', '').strip() or fields.get('VERSION', '').strip()
+        if not VERSION.fullmatch(version) or tuple(map(int, version.split('.'))) != tuple(map(int, expected_version.split('.'))):
+            raise ValueError(f'PS4 PKG version does not match: {path.name} (expected {expected_version}, found {version or "none"})')
     return content_id
 
 
@@ -482,13 +498,10 @@ def run_orbis(tool, project, package, log, progress, cancelled):
             reader.join(timeout=1)
 
 
-def build_packages(dumps, executable, output, *, preserve_keystone=True, storage_type='digital50',
-                   existing_base=None, existing_gp4=None, nearby_gp4s=None,
-                   log=lambda _: None, progress=lambda _: None, cancelled=lambda: False, runner=None):
-    if os.name != 'nt' and runner is None:
-        raise OSError('Building FPKGs requires Windows.')
+def prepare_batch(dumps, executable, output, *, preserve_keystone, existing_base, resume, filesystem,
+                  require_helpers, log, cancelled):
     _check_cancelled(cancelled)
-    tool = validate_tool(executable)
+    tool = validate_tool(executable, require_helpers=require_helpers)
     root = long_path(output)
     if not root.is_dir() or _linked(root):
         raise ValueError('Choose an existing output directory.')
@@ -505,6 +518,88 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
     plan = build_plan(dumps, existing_base_id=existing_base_id)
     if not plan:
         raise ValueError('Select at least one dump to build.')
+
+    jobs, warnings = [], []
+    reusable_bases = set(base_packages)
+    required = 0
+    fat32 = filesystem.strip().casefold() in {'fat32', 'vfat', 'msdos'}
+    for dump, relative in plan:
+        _check_cancelled(cancelled)
+        final = long_path(root / relative)
+        if any(final == source.path or source.path in final.parents for source in dumps):
+            raise ValueError(f'Output is inside a selected dump: {final}')
+        if _linked(final) or _linked(final.parent):
+            raise ValueError(f'Output path is linked: {final}')
+        reuse = final.exists()
+        if reuse:
+            if not resume:
+                raise ValueError(f'Output already exists: {final}. Use Resume batch to verify and reuse it.')
+            try:
+                validate_package(final, expected_content_id=dump.content_id,
+                                 expected_category=dump.category, expected_version=dump.build_version)
+            except (OSError, ValueError) as error:
+                raise ValueError(f'Cannot resume with {final.name}: {error}. '
+                                 'Move the existing file aside or use another output folder.') from error
+            if dump.category == 'gd':
+                reusable_bases.add(dump.title_id)
+            if dump.category == 'gp' and dump.title_id not in reusable_bases:
+                raise ValueError(f'Cannot reuse {final.name} while its base needs to be rebuilt. '
+                                 'Move the patch aside so both packages can be built together.')
+        else:
+            preflight_dump(dump, preserve_keystone, log)
+            files, directories = _payload(dump, preserve_keystone, cancelled)
+            # Budget from the uncompressed dump, allowing for PFS alignment and package metadata.
+            block = 64 * 1024
+            estimate = (8 * 1024 * 1024) + len(directories) * block
+            for _, source in files:
+                _check_cancelled(cancelled)
+                size = source.stat().st_size
+                estimate += ((size + block - 1) // block) * block
+            required += estimate
+            if fat32 and estimate > FAT32_FILE_LIMIT:
+                warnings.append(f'{final.name} may exceed FAT32’s maximum file size of 4 GiB minus 1 byte. '
+                                'Choose an exFAT or NTFS output drive.')
+        jobs.append((dump, final, reuse))
+
+    free = shutil.disk_usage(root).free
+    if required > free:
+        warnings.append(f'Estimated output needs {required / (1 << 30):.2f} GiB. '
+                        f'The output drive has {free / (1 << 30):.2f} GiB free.')
+    return tool, base_packages, jobs, required, free, warnings
+
+
+def check_batch(dumps, executable, output, *, preserve_keystone=True, existing_base=None,
+                resume=False, filesystem='', log=lambda _: None, cancelled=lambda: False):
+    _, _, jobs, required, free, warnings = prepare_batch(
+        dumps, executable, output, preserve_keystone=preserve_keystone, existing_base=existing_base,
+        resume=resume, filesystem=filesystem, require_helpers=True, log=log, cancelled=cancelled,
+    )
+    reused = sum(reuse for _, _, reuse in jobs)
+    return len(jobs) - reused, reused, required, free, warnings
+
+
+def build_packages(dumps, executable, output, *, preserve_keystone=True, storage_type='digital50',
+                   existing_base=None, existing_gp4=None, nearby_gp4s=None, row_gp4s=None,
+                   resume=False, filesystem='', allow_size_warnings=False,
+                   log=lambda _: None, progress=lambda _: None, cancelled=lambda: False, runner=None):
+    if os.name != 'nt' and runner is None:
+        raise OSError('Building FPKGs requires Windows.')
+    dumps = list(dumps)
+    tool, base_packages, jobs, _, _, warnings = prepare_batch(
+        dumps, executable, output, preserve_keystone=preserve_keystone, existing_base=existing_base,
+        resume=resume, filesystem=filesystem, require_helpers=runner is None, log=log, cancelled=cancelled,
+    )
+    if warnings and not allow_size_warnings:
+        raise ValueError('\n'.join(warnings))
+    for warning in warnings:
+        log(f'Warning: {warning}')
+    row_gp4s = row_gp4s or {}
+    for dump, _, reuse in jobs:
+        chosen = row_gp4s.get(dump.path)
+        if chosen and not reuse:
+            _, content_id, category = read_existing_gp4(chosen)
+            if (content_id, category) != (dump.content_id, dump.category):
+                raise ValueError(f'{chosen} does not match the content ID or package type for {dump.path.name}.')
     nearby_gp4s = nearby_gp4s or {}
     imported_dump = None
     if existing_gp4:
@@ -513,29 +608,34 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
         if len(matches) != 1:
             raise ValueError('Select exactly one dump matching the existing GP4 content ID and package type.')
         imported_dump = matches[0]
-    for dump, relative in plan:
-        _check_cancelled(cancelled)
-        final = root / relative
-        if any(final == source.path or source.path in final.parents for source in dumps):
-            raise ValueError(f'Output is inside a selected dump: {final}')
-        if final.exists() or _linked(final) or _linked(final.parent):
-            raise ValueError(f'Output already exists or is linked: {final}')
-        preflight_dump(dump, preserve_keystone, log)
     invoke = runner or run_orbis
-    created = []
-    for index, (dump, relative) in enumerate(plan, 1):
+    ready = []
+    for index, (dump, final, reuse) in enumerate(jobs, 1):
         _check_cancelled(cancelled)
-        final = long_path(root / relative)
+        if reuse:
+            log(f'[{index}/{len(jobs)}] Reusing verified {final.name}')
+            if dump.category == 'gd':
+                base_packages[dump.title_id] = final
+            ready.append(final)
+            progress(100)
+            continue
         final.parent.mkdir(exist_ok=True)
-        log(f'[{index}/{len(plan)}] Building {relative.name}')
+        log(f'[{index}/{len(jobs)}] Building {final.name}')
         progress(0)
         with TemporaryDirectory(prefix='.fpkg-', dir=final.parent) as scratch:
             project_path = long_path(Path(scratch) / 'project.gp4')
             package = long_path(Path(scratch) / 'package.pkg')
             project_options = dict(preserve_keystone=preserve_keystone, cancelled=cancelled,
                                    base_package=base_packages.get(dump.title_id))
-            matched_gp4 = nearby_gp4s.get(dump.path)
-            if dump == imported_dump:
+            matched_gp4 = nearby_gp4s.get(dump.path) if dump.path not in row_gp4s else None
+            chosen_gp4 = row_gp4s.get(dump.path)
+            if chosen_gp4:
+                project, content_id, category = read_existing_gp4(chosen_gp4)
+                if (content_id, category) != (dump.content_id, dump.category):
+                    raise ValueError(f'The GP4 changed after selection: {chosen_gp4}')
+                log(f'Using selected GP4: {chosen_gp4}')
+                write_existing_gp4(project, dump, project_path, **project_options)
+            elif dump == imported_dump and dump.path not in row_gp4s:
                 log(f'Using existing GP4: {existing_gp4}')
                 write_existing_gp4(override_project, dump, project_path, **project_options)
             elif matched_gp4:
@@ -554,7 +654,8 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
                 write_gp4(dump, project_path, storage_type=storage_type, **project_options)
             invoke(tool, project_path, package, log, progress, cancelled)
             _check_cancelled(cancelled)
-            validate_package(package, expected_content_id=dump.content_id, expected_category=dump.category)
+            validate_package(package, expected_content_id=dump.content_id, expected_category=dump.category,
+                             expected_version=dump.build_version)
             # Windows rename fails if a concurrent build has already published this name.
             if os.name == 'nt':
                 package.rename(final)
@@ -562,7 +663,7 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
                 os.link(package, final)
         if dump.category == 'gd':
             base_packages[dump.title_id] = final
-        created.append(final)
+        ready.append(final)
         progress(100)
         log(f'Saved {final}')
-    return created
+    return ready
