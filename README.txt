@@ -58,7 +58,9 @@ independent ascending or descending directions. Your sort choices are saved.
 
 The dashboard and save inspector show local game artwork. For Borderlands 4
 and exact installed Steam matches, the app can download and cache official
-Steam artwork. Use Choose Game Art to override it with a local image.
+Steam artwork. Use Choose Game Art to preview Steam banners, headers, capsules
+and portraits, or to use a local image. Paste a Steam game link or App ID if
+the title was not matched automatically. The chosen image appears in both views.
 
 Open Settings to choose Dashboard Cards, Interface Text Size, or Keyboard
 Shortcuts. Open the Command Palette from the sidebar or with Ctrl+K by default.
@@ -113,9 +115,15 @@ it unchecked and choose a previously built package in Existing base PKG.
 Scan dumps finds matching GP4 projects in each dump folder or its immediate
 parent within the selected input folder. The GP4 column shows which project
 each row will use. Check any number of games or patches and click Build selected.
-The app generates a GP4 if there is no unambiguous match. Use GP4 override to
-pick a different existing project for one selected dump. The app resolves source
-files from the dump and leaves the original project in place.
+The app generates a GP4 if there is no unambiguous match. Select a package row
+and use Choose Row GP4, or double-click its GP4 cell, to choose a specific file,
+use the automatic match, or generate a project. The original GP4 stays in place.
+
+Check batch verifies the publishing tool and its ext/sc.exe helper, estimates
+the output size, and flags disk-space and FAT32 file-limit risks. Build selected
+runs the same check. Enable Resume batch and select the same dumps and output
+folder to reuse finished packages after a failure or cancellation. The builder
+checks their content IDs, types, versions, and package structure before reuse.
 
 Before building, the app checks for a usable base-game eboot.bin and warns
 if a requested keystone is missing. It checks the structure and identity of

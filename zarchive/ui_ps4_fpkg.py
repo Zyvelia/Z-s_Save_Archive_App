@@ -2,13 +2,13 @@
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import QStorageInfo, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .ps4_fpkg import CATEGORIES, build_packages, scan_build_inputs, validate_tool
+from .ps4_fpkg import CATEGORIES, build_packages, check_batch, read_existing_gp4, scan_build_inputs, validate_tool
 from .ui_preferences import choose_sort, sorted_by, valid_sort
 
 PACKAGE_SORT_FIELDS = ('Game', 'Title ID', 'Version', 'Package type', 'GP4', 'Dump path')
@@ -68,9 +68,11 @@ class FpkgPanel(QWidget):
         super().__init__(parent)
         self.archive, self.settings = archive, settings
         self.worker = None
+        self.after_check = None
         self.dump_items = []
         self.scan_path = None
         self.nearby_gp4s = {}
+        self.row_gp4s = {}
         self.package_sort = valid_sort(settings.load_settings().get('package_sort'),
                                        PACKAGE_SORT_FIELDS, [('Game', False)])
         layout = QVBoxLayout(self)
@@ -106,10 +108,6 @@ class FpkgPanel(QWidget):
         self.existing_base.setPlaceholderText('Optional · for a patch-only build')
         self.base_button = add('Existing base PKG', self.existing_base, lambda: self.choose_file(
             self.existing_base, 'Choose an existing base package', 'PS4 package (*.pkg)'))
-        self.existing_gp4 = QLineEdit()
-        self.existing_gp4.setPlaceholderText('Optional · override the project for one selected dump')
-        self.gp4_button = add('GP4 override', self.existing_gp4, lambda: self.choose_file(
-            self.existing_gp4, 'Choose a build GP4', 'PS4 build project (*.gp4)'))
         options = QHBoxLayout()
         self.keystone = QCheckBox('Preserve sce_sys/keystone')
         self.keystone.setChecked(True)
@@ -121,6 +119,12 @@ class FpkgPanel(QWidget):
         self.sort_button = QPushButton('Sort Packages…')
         self.sort_button.clicked.connect(self.configure_sort)
         options.addWidget(self.sort_button)
+        self.row_gp4_button = QPushButton('Choose Row GP4…')
+        self.row_gp4_button.clicked.connect(lambda: self.choose_row_gp4(self.tree.currentItem()))
+        options.addWidget(self.row_gp4_button)
+        self.resume = QCheckBox('Resume batch')
+        self.resume.setToolTip('Verify and reuse completed outputs in the selected output folder')
+        options.addWidget(self.resume)
         options.addStretch()
         layout.addLayout(options)
 
@@ -131,6 +135,8 @@ class FpkgPanel(QWidget):
         self.tree.setColumnWidth(1, 95)
         self.tree.setColumnWidth(2, 175)
         self.tree.setMinimumHeight(155)
+        self.tree.currentItemChanged.connect(self.update_buttons)
+        self.tree.itemDoubleClicked.connect(lambda item, column: self.choose_row_gp4(item) if column == 2 else None)
         layout.addWidget(self.tree, 2)
         self.status = QLabel('Choose a dumps folder and scan it.')
         self.status.setWordWrap(True)
@@ -153,12 +159,14 @@ class FpkgPanel(QWidget):
         actions = QHBoxLayout()
         self.scan_button = QPushButton('Scan dumps')
         self.scan_button.clicked.connect(self.scan)
+        self.check_button = QPushButton('Check batch')
+        self.check_button.clicked.connect(lambda: self.preflight(False))
         self.build_button = QPushButton('Build selected')
         self.build_button.setObjectName('newAction')
         self.build_button.clicked.connect(self.build)
         self.cancel_button = QPushButton('Cancel build')
         self.cancel_button.clicked.connect(self.cancel)
-        for button in (self.scan_button, self.build_button, self.cancel_button, self.log_toggle):
+        for button in (self.scan_button, self.check_button, self.build_button, self.cancel_button, self.log_toggle):
             actions.addWidget(button)
         layout.addLayout(actions)
         self.source.textChanged.connect(self.invalidate_scan)
@@ -201,6 +209,7 @@ class FpkgPanel(QWidget):
     def invalidate_scan(self):
         self.scan_path = None
         self.nearby_gp4s = {}
+        self.row_gp4s = {}
         self.tree.clear()
         self.dump_items.clear()
         self.update_buttons()
@@ -212,15 +221,20 @@ class FpkgPanel(QWidget):
         active = self.worker is not None
         for widget in (self.tool, self.tool_button, self.source, self.source_button,
                        self.output, self.output_button, self.existing_base, self.base_button,
-                       self.existing_gp4, self.gp4_button, self.tree, self.keystone, self.storage, self.sort_button):
+                       self.tree, self.keystone, self.storage, self.sort_button, self.resume):
             widget.setEnabled(not active)
         self.scan_button.setEnabled(not active and bool(self.source.text().strip()))
-        self.build_button.setEnabled(not active and self.scan_path is not None and bool(self.selected()))
+        selected = not active and self.scan_path is not None and bool(self.selected())
+        self.check_button.setEnabled(selected)
+        self.build_button.setEnabled(selected)
+        self.row_gp4_button.setEnabled(not active and any(
+            item is self.tree.currentItem() for item, _ in self.dump_items))
         self.cancel_button.setEnabled(active)
 
     def start(self, worker, result_handler):
         self.worker = worker
-        self.cancel_button.setText('Cancel scan' if worker.operation is scan_build_inputs else 'Cancel build')
+        cancel_text = {scan_build_inputs: 'Cancel scan', check_batch: 'Cancel check'}
+        self.cancel_button.setText(cancel_text.get(worker.operation, 'Cancel build'))
         worker.result.connect(result_handler)
         worker.failed.connect(self.show_failure)
         worker.log.connect(self.log.appendPlainText)
@@ -307,27 +321,96 @@ class FpkgPanel(QWidget):
             group.sort_rank = index
         self.tree.sortItems(0, Qt.SortOrder.AscendingOrder)
 
+    def choose_row_gp4(self, item):
+        if self.worker:
+            return
+        dump = next((dump for row, dump in self.dump_items if row is item), None)
+        if dump is None:
+            return
+        menu = QMenu(self)
+        pick = menu.addAction('Choose GP4 file…')
+        automatic = menu.addAction('Use automatic match')
+        generate = menu.addAction('Generate GP4')
+        action = menu.exec(self.row_gp4_button.mapToGlobal(self.row_gp4_button.rect().bottomLeft()))
+        if action == pick:
+            current = self.row_gp4s.get(dump.path) or self.nearby_gp4s.get(dump.path) or dump.path
+            path, _ = QFileDialog.getOpenFileName(self, 'Choose GP4 for ' + dump.title,
+                                                  str(current), 'PS4 build project (*.gp4)')
+            if not path:
+                return
+            try:
+                _, content_id, category = read_existing_gp4(path)
+                if (content_id, category) != (dump.content_id, dump.category):
+                    raise ValueError('Choose a GP4 with this row’s content ID and package type.')
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(self, 'Could not use GP4', str(error))
+                return
+            self.row_gp4s[dump.path] = Path(path)
+        elif action == automatic:
+            self.row_gp4s.pop(dump.path, None)
+        elif action == generate:
+            self.row_gp4s[dump.path] = None
+        else:
+            return
+        gp4 = self.row_gp4s.get(dump.path, self.nearby_gp4s.get(dump.path))
+        item.setText(2, gp4.name if gp4 else 'Generate')
+        item.setToolTip(2, str(gp4) if gp4 else 'Generate a GP4 when building this dump')
+        item.sort_values['GP4'] = gp4.name.casefold() if gp4 else ''
+        self.apply_package_sort()
+
     def build(self):
+        self.preflight(True)
+
+    def preflight(self, build):
         if not self.output.text().strip() or not self.tool.text().strip():
             self.status.setText('Choose the package tool and output folder.')
             return
         if not self.save_tool():
             return
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.status.setText('Building selected packages…')
+        output = self.output.text().strip()
+        args = (self.selected(), self.tool.text().strip(), output)
+        filesystem = bytes(QStorageInfo(output).fileSystemType()).decode('ascii', errors='replace')
+        options = dict(preserve_keystone=self.keystone.isChecked(),
+                       existing_base=self.existing_base.text().strip(),
+                       resume=self.resume.isChecked(), filesystem=filesystem)
+        self.bar.setRange(0, 0)
+        self.status.setText('Checking selected packages…')
         self.log.clear()
         self.log_toggle.setChecked(True)
-        worker = PackageWorker(build_packages, self.selected(), self.tool.text().strip(),
-                               self.output.text().strip(), preserve_keystone=self.keystone.isChecked(),
-                               storage_type=self.storage.currentText(),
-                               existing_base=self.existing_base.text().strip(),
-                               existing_gp4=self.existing_gp4.text().strip(), nearby_gp4s=self.nearby_gp4s)
-        worker.options.update(log=worker.log.emit, progress=worker.progress.emit)
-        self.start(worker, self.show_build)
+        worker = PackageWorker(check_batch, *args, **options)
+        worker.options['log'] = worker.log.emit
+        self.start(worker, lambda result: self.complete_preflight(result, build, args, options))
+
+    def complete_preflight(self, result, build, args, options):
+        def after():
+            pending, reused, required, free, warnings = result
+            summary = f'{pending} to build · {reused} verified · {required / (1 << 30):.2f} GiB estimated · {free / (1 << 30):.2f} GiB free'
+            self.status.setText(summary + (f' · {len(warnings)} warning(s)' if warnings else ''))
+            self.log.appendPlainText(summary)
+            for warning in warnings:
+                self.log.appendPlainText(f'Warning: {warning}')
+            if not build:
+                return
+            if warnings:
+                buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                if QMessageBox.warning(self, 'Output drive warning',
+                                       '\n\n'.join(warnings) + '\n\nBuild anyway?',
+                                       buttons, QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                    return
+            self.bar.setValue(0)
+            self.status.setText('Building selected packages…')
+            worker = PackageWorker(
+                build_packages, *args, **options,
+                storage_type=self.storage.currentText(), nearby_gp4s=self.nearby_gp4s,
+                row_gp4s=self.row_gp4s, allow_size_warnings=bool(warnings),
+            )
+            worker.options.update(log=worker.log.emit, progress=worker.progress.emit)
+            self.start(worker, self.show_build)
+
+        self.after_check = after
 
     def show_build(self, paths):
-        self.status.setText(f'Built {len(paths)} package(s).')
+        self.status.setText(f'{len(paths)} package(s) ready.')
         self.bar.setValue(100)
 
     def show_failure(self, error):
@@ -342,8 +425,12 @@ class FpkgPanel(QWidget):
             self.cancel_button.setEnabled(False)
 
     def finish(self):
+        cancelled = self.worker.cancelled.is_set()
         self.worker = None
+        after, self.after_check = self.after_check, None
         if self.bar.maximum() == 0:
             self.bar.setRange(0, 100)
             self.bar.setValue(0)
         self.update_buttons()
+        if after and not cancelled:
+            after()
