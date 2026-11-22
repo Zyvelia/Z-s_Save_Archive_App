@@ -68,6 +68,15 @@ Use Remember Save USB to select a connected removable Windows volume. Save
 import dialogs start on that volume when it reconnects, even if Windows
 assigns it a different drive letter.
 
+Changing a .sav slot number
+---------------------------
+
+Select an archived save in Saves & Backups > Browse Saves, then choose
+Change .sav Number in the inspector. Select a numbered file, enter the desired
+slot, and choose a folder for the exported copy. This supports names such as
+1.sav and Save0001.sav and preserves the existing prefix and zero padding.
+The original archived file is kept, and an occupied output filename is refused.
+
 Removing archived saves
 -----------------------
 

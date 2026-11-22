@@ -14,6 +14,7 @@ from .appdata_v34 import AppPaths
 from .ui_ps4_fpkg import FpkgPanel
 from .removable_drives import remembered_drive, removable_drives
 from .storage import CHECKPOINT_KINDS
+from .editor_v18 import numbered_save_name
 from .ui_artwork import ArtworkPicker, GameArtwork
 from .ui_preferences import InterfaceTextSize, choose_sort, edit_shortcuts, sorted_by, valid_sort
 from .ui_v16 import CommandPalette
@@ -628,6 +629,9 @@ class Window(ExistingWindow):
         tools.addWidget(self.checkpoint_button)
         tools.addWidget(self.art_button)
         detail.insertLayout(detail.indexOf(self.checkpoint_summary) + 1, tools)
+        self.sav_number_button = QPushButton('Change .sav Number…')
+        self.sav_number_button.clicked.connect(self.change_sav_number)
+        detail.insertWidget(detail.indexOf(self.checkpoint_summary) + 2, self.sav_number_button)
         self.update_save_header()
 
     def sort_saves(self):
@@ -670,6 +674,7 @@ class Window(ExistingWindow):
         self.save_banner.setVisible(bool(save))
         self.checkpoint_button.setEnabled(bool(save))
         self.art_button.setEnabled(bool(save))
+        self.sav_number_button.setEnabled(bool(save))
         if save:
             size = QSize(324, 151)
             self.save_banner.setPixmap(self.artwork.icon(save['game'], save['platform'], size).pixmap(size))
@@ -710,6 +715,69 @@ class Window(ExistingWindow):
                     self.save_list.setCurrentItem(item)
                     self.select_save(item)
                     break
+
+    def change_sav_number(self):
+        save = self.current
+        if not save:
+            return
+        try:
+            candidates = self.archive.numbered_saves(save['id'])
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Could not open archived save', str(error))
+            return
+        if not candidates:
+            QMessageBox.information(self, 'Change .sav Number',
+                                    'This entry has no numbered .sav files to export.')
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Change .sav Number')
+        form = QFormLayout(dialog)
+        source = QComboBox()
+        source.addItems([path.as_posix() for path in candidates])
+        number = QLineEdit()
+        number.setPlaceholderText('Example: 7')
+        preview = QLabel()
+        preview.setWordWrap(True)
+        form.addRow('Archived file', source)
+        form.addRow('New slot', number)
+        form.addRow('Export filename', preview)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        export = buttons.button(QDialogButtonBox.StandardButton.Save)
+        export.setText('Export copy…')
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        def update_preview():
+            try:
+                name = numbered_save_name(candidates[source.currentIndex()].name, number.text())
+            except ValueError as error:
+                preview.setText(str(error) if number.text().strip() else 'Enter a new slot number.')
+                export.setEnabled(False)
+            else:
+                preview.setText(name)
+                export.setEnabled(True)
+
+        source.currentIndexChanged.connect(update_preview)
+        number.textChanged.connect(update_preview)
+        update_preview()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        output = QFileDialog.getExistingDirectory(self, 'Choose a folder for the renamed copy')
+        if not output:
+            return
+        try:
+            target = self.archive.export_numbered_save(
+                save['id'], candidates[source.currentIndex()], number.text(), output,
+            )
+        except FileExistsError:
+            QMessageBox.warning(self, 'Filename already in use', 'Choose another slot number or output folder.')
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Could not export save', str(error))
+        else:
+            self.statusBar().showMessage(f'Exported {target}')
+            QMessageBox.information(self, 'Renamed copy exported', str(target))
 
     def set_game_row_art(self, item, game):
         item.setIcon(self.artwork.icon(game['game'], game['platform'], self.home_game_list.iconSize()))
