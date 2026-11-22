@@ -15,6 +15,26 @@ MAX_FIELDS = 64
 TOKEN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,63}$')
 
 
+NUMBERED_SAVE = re.compile(r'(Save)?([0-9a-f]+)(\.sav)', re.I)
+
+
+def numbered_save_name(filename, number):
+    """Replace the slot in a numbered .sav filename, preserving its prefix and zero padding."""
+    match = NUMBERED_SAVE.fullmatch(filename)
+    if match is None:
+        raise ValueError('Choose a numbered .sav file.')
+    requested = number.strip()
+    if not re.fullmatch(r'[0-9a-f]+', requested, re.I):
+        raise ValueError('Enter a slot using digits 0–9 or hexadecimal letters A–F.')
+    prefix, slot, extension = match.groups()
+    if len(slot) > 1 and slot.startswith('0'):
+        requested = requested.zfill(len(slot))
+    name = (prefix or '') + requested + extension
+    if name.casefold() == filename.casefold():
+        raise ValueError('Choose a different save number.')
+    return name
+
+
 def _safe_rel(value):
     if not isinstance(value,str) or not value or '\\' in value or '\0' in value:
         raise ValueError('Invalid relative filename')
@@ -106,6 +126,34 @@ class ArchiveV18(ArchiveV17):
         digest=folder_digest(folder)
         if digest!=(row['file_hash'],row['size_bytes'],row['file_count']):raise ValueError('Archived save integrity check failed')
         return dict(row),folder
+
+    def numbered_saves(self, save_id):
+        _, folder = self.save_for_edit(save_id)
+        return sorted(path.relative_to(folder) for path in folder.rglob('*')
+                      if NUMBERED_SAVE.fullmatch(path.name) and path.is_file())
+
+    def export_numbered_save(self, save_id, relative_file, number, output_folder):
+        _, folder = self.save_for_edit(save_id)
+        relative = Path(relative_file)
+        if relative.anchor or '..' in relative.parts:
+            raise ValueError('Choose a file from the archived save.')
+        filename = numbered_save_name(relative.name, number)
+        original = folder / relative
+        if original.resolve(strict=True) != original or not original.is_file():
+            raise ValueError('Choose a regular file from the archived save.')
+        output = Path(output_folder).expanduser().resolve(strict=True)
+        if not output.is_dir() or output.is_relative_to(self.root):
+            raise ValueError('Choose an existing folder outside the managed archive.')
+        target = output / filename
+        with original.open('rb') as source:
+            destination = target.open('xb')
+            try:
+                with destination:
+                    shutil.copyfileobj(source, destination)
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
+        return target
 
     def inspect_editor(self,save_id,plugin_id,working_folder=None):
         row,folder=self.save_for_edit(save_id)

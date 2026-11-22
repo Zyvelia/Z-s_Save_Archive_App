@@ -2,9 +2,10 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from zipfile import ZipFile
 
-from zarchive.editor_v18 import ArchiveV18
+from zarchive.editor_v18 import ArchiveV18, numbered_save_name
 from zarchive.removable_drives import RemovableDrive, remembered_drive
 
 try:
@@ -39,6 +40,45 @@ class ArchiveUsabilityTests(unittest.TestCase):
                 self.assertEqual(record['checkpoint_kind'], 'Boss')
                 archive.set_checkpoint(record_id, 'Boss', '')
                 self.assertEqual(archive.list_saves('First encounter'), [])
+            finally:
+                archive.close()
+
+    def test_numbered_sav_name_preserves_prefix_padding_and_extension(self):
+        self.assertEqual(numbered_save_name('1.sav', '7'), '7.sav')
+        self.assertEqual(numbered_save_name('Save0001.SAV', 'F'), 'Save000F.SAV')
+        for old, new in [('profile.sav', '7'), ('1.sav', '1'), ('1.sav', '../7')]:
+            with self.subTest(old=old, new=new), self.assertRaises(ValueError):
+                numbered_save_name(old, new)
+
+    def test_export_numbered_save_is_exclusive_and_preserves_originals(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'saves'
+            source.mkdir()
+            nested = source / 'characters'
+            nested.mkdir()
+            (nested / '1.sav').write_bytes(b'character')
+            (source / 'profile.sav').write_bytes(b'profile')
+            output = root / 'export'
+            output.mkdir()
+            archive = ArchiveV18(root / 'archive')
+            try:
+                record_id = archive.import_pc_save(source, 'Borderlands 4')['id']
+                relative, = archive.numbered_saves(record_id)
+                self.assertEqual(relative, Path('characters/1.sav'))
+                exported = archive.export_numbered_save(record_id, relative, '7', output)
+                self.assertEqual(exported.name, '7.sav')
+                self.assertEqual(exported.read_bytes(), b'character')
+                with self.assertRaises(FileExistsError):
+                    archive.export_numbered_save(record_id, relative, '7', output)
+                with self.assertRaisesRegex(ValueError, 'outside the managed archive'):
+                    archive.export_numbered_save(record_id, relative, '8', archive.root)
+                with patch('zarchive.editor_v18.shutil.copyfileobj', side_effect=OSError('copy failed')):
+                    with self.assertRaisesRegex(OSError, 'copy failed'):
+                        archive.export_numbered_save(record_id, relative, '8', output)
+                self.assertFalse((output / '8.sav').exists())
+                self.assertEqual((nested / '1.sav').read_bytes(), b'character')
+                self.assertEqual(archive.numbered_saves(record_id), [relative])
             finally:
                 archive.close()
 
