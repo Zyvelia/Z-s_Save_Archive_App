@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from .storage import parse_param_sfo, read_param_sfo
 
 CATEGORIES = {'gd': 'Base', 'gp': 'Patch', 'ac': 'DLC'}
-VOLUME_CATEGORIES = {'pkg_ps4_app': 'gd', 'pkg_ps4_patch': 'gp',
+VOLUME_CATEGORIES = {'pkg_ps4_app': 'gd', 'pkg_ps4_remaster': 'gd', 'pkg_ps4_patch': 'gp',
                      'pkg_ps4_ac_data': 'ac', 'pkg_ps4_ac_nodata': 'ac'}
 SFO_ENTRY_ID = 0x1000
 MAX_SFO_BYTES = 1024 * 1024
@@ -40,6 +40,7 @@ class Dump:
     category: str
     app_ver: str
     version: str
+    remaster: bool = False
 
     @property
     def build_version(self):
@@ -99,7 +100,8 @@ def inspect_dump(folder):
         raise ValueError('Invalid APP_VER or VERSION.')
     if not (app_ver or version) and category != 'ac':
         raise ValueError('Missing APP_VER and VERSION.')
-    return Dump(folder, title_id, content_id, title, category, app_ver, version)
+    remaster = category == 'gd' and fields.get('REMASTER_TYPE') == '1'
+    return Dump(folder, title_id, content_id, title, category, app_ver, version, remaster)
 
 
 def scan_dumps(source, cancelled=lambda: False):
@@ -142,7 +144,8 @@ def validate_tool(executable, *, require_helpers=False):
     return path
 
 
-def validate_package(path, *, expected_content_id=None, expected_category=None, expected_version=None):
+def validate_package(path, *, expected_content_id=None, expected_category=None,
+                     expected_version=None, expected_package_version=None):
     """Check package bounds and read its identity from the header and embedded SFO."""
     path = long_path(path)
     if _linked(path) or not path.is_file():
@@ -184,11 +187,88 @@ def validate_package(path, *, expected_content_id=None, expected_category=None, 
         raise ValueError(f'PS4 PKG content ID does not match: {path.name} ({content_id})')
     if expected_category and fields.get('CATEGORY', '').lower() != expected_category:
         raise ValueError(f'Expected a {CATEGORIES[expected_category].lower()} PS4 package: {path.name}')
-    if expected_version:
-        version = fields.get('APP_VER', '').strip() or fields.get('VERSION', '').strip()
-        if not VERSION.fullmatch(version) or tuple(map(int, version.split('.'))) != tuple(map(int, expected_version.split('.'))):
-            raise ValueError(f'PS4 PKG version does not match: {path.name} (expected {expected_version}, found {version or "none"})')
+    app_version = fields.get('APP_VER', '').strip()
+    package_version = fields.get('VERSION', '').strip()
+    versions = (
+        (expected_version, app_version if expected_package_version else app_version or package_version),
+        (expected_package_version, package_version),
+    )
+    for expected, actual in versions:
+        if expected and (not VERSION.fullmatch(actual)
+                         or tuple(map(int, actual.split('.'))) != tuple(map(int, expected.split('.')))):
+            raise ValueError(f'PS4 PKG version does not match: {path.name} (expected {expected}, found {actual or "none"})')
     return content_id
+
+
+def validate_dump_package(path, dump):
+    return validate_package(
+        path, expected_content_id=dump.content_id, expected_category=dump.category,
+        expected_version='01.00' if dump.remaster else dump.build_version,
+        expected_package_version=dump.build_version if dump.remaster else None,
+    )
+
+
+def stage_remaster_metadata(dump, project_path):
+    """Convert a built-in update to base metadata in the temporary build project."""
+    source = dump.path / 'sce_sys' / 'param.sfo'
+    with source.open('rb') as stream:
+        data = stream.read(MAX_SFO_BYTES + 1)
+    if len(data) > MAX_SFO_BYTES:
+        raise ValueError('param.sfo exceeds 1 MiB.')
+    fields = parse_param_sfo(data)
+    app_version = fields.get('APP_VER', '').strip() or fields.get('VERSION', '').strip()
+    if fields.get('REMASTER_TYPE') != '1' or app_version != dump.build_version:
+        raise ValueError('Remaster metadata changed since the dump was scanned. Scan again.')
+
+    magic, version, keys_offset, values_offset, count = struct.unpack_from('<4sIIII', data)
+    if not 20 + count * 16 <= keys_offset <= values_offset <= len(data):
+        raise ValueError('Invalid remaster param.sfo table offsets.')
+    fields_to_replace = {b'APP_VER': b'01.00\0', b'VERSION': dump.build_version.encode('ascii') + b'\0'}
+    entries = {}
+    for index in range(count):
+        key_offset, format_code, size, capacity, value_offset = struct.unpack_from('<HHIII', data, 20 + index * 16)
+        start = keys_offset + key_offset
+        end = data.find(b'\0', start, values_offset)
+        if end < 0 or not start < end or capacity > MAX_SFO_BYTES:
+            raise ValueError('Invalid remaster param.sfo entry.')
+        name = data[start:end]
+        if name in (b'REMASTER_TYPE', b'TARGET_APP_VER'):
+            continue
+        raw = data[values_offset + value_offset:values_offset + value_offset + size]
+        if name in fields_to_replace:
+            raw = fields_to_replace.pop(name)
+        if name in entries:
+            raise ValueError('Duplicate remaster param.sfo entry.')
+        entries[name] = (format_code, max(capacity, len(raw)), raw)
+    for name, raw in fields_to_replace.items():
+        entries[name] = (0x0204, 8, raw)
+
+    table, keys, values = bytearray(), bytearray(), bytearray()
+    for name, (format_code, capacity, raw) in sorted(entries.items()):
+        if len(keys) > 0xffff or len(values) + capacity + 3 > MAX_SFO_BYTES:
+            raise ValueError('Remaster param.sfo is too large.')
+        values.extend(b'\0' * (-len(values) % 4))
+        table.extend(struct.pack('<HHIII', len(keys), format_code, len(raw), capacity, len(values)))
+        keys.extend(name + b'\0')
+        values.extend(raw)
+        values.extend(b'\0' * (capacity - len(raw)))
+
+    key_start = 20 + len(table)
+    keys.extend(b'\0' * (-(key_start + len(keys)) % 4))
+    value_start = key_start + len(keys)
+    if value_start + len(values) > MAX_SFO_BYTES:
+        raise ValueError('Remaster param.sfo is too large.')
+    staged = project_path.with_name('param.sfo')
+    staged.write_bytes(struct.pack('<4sIIII', magic, version, key_start, value_start, len(entries))
+                       + table + keys + values)
+    project = ET.parse(project_path)
+    entry = next((entry for entry in project.findall('files/file')
+                  if entry.get('targ_path', '').replace('\\', '/').casefold() == 'sce_sys/param.sfo'), None)
+    if entry is None:
+        raise ValueError('GP4 is missing sce_sys/param.sfo.')
+    entry.set('orig_path', str(long_path(staged)))
+    project.find('volume/volume_type').text = 'pkg_ps4_app'
+    project.write(project_path, encoding='utf-8', xml_declaration=True)
 
 
 def preflight_dump(dump, preserve_keystone, log):
@@ -300,6 +380,8 @@ def write_existing_gp4(project, dump, destination, *, preserve_keystone, base_pa
         ET.SubElement(listing, 'file', targ_path=target, orig_path=str(long_path(source)))
     package = project.find('volume/package')
     package.set('passcode', PASSCODE)
+    if project.findtext('volume/volume_type') == 'pkg_ps4_remaster':
+        project.find('volume/volume_type').text = 'pkg_ps4_app'
     if dump.category == 'gp':
         package.set('app_path', str(long_path(base_package)))
     else:
@@ -535,8 +617,7 @@ def prepare_batch(dumps, executable, output, *, preserve_keystone, existing_base
             if not resume:
                 raise ValueError(f'Output already exists: {final}. Use Resume batch to verify and reuse it.')
             try:
-                validate_package(final, expected_content_id=dump.content_id,
-                                 expected_category=dump.category, expected_version=dump.build_version)
+                validate_dump_package(final, dump)
             except (OSError, ValueError) as error:
                 raise ValueError(f'Cannot resume with {final.name}: {error}. '
                                  'Move the existing file aside or use another output folder.') from error
@@ -652,10 +733,12 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
                     log(f'Using existing GP4: {matched_gp4}')
             if not project_path.exists():
                 write_gp4(dump, project_path, storage_type=storage_type, **project_options)
+            if dump.remaster:
+                stage_remaster_metadata(dump, project_path)
+                log(f'Prepared remaster metadata for a standard base package (version {dump.build_version}).')
             invoke(tool, project_path, package, log, progress, cancelled)
             _check_cancelled(cancelled)
-            validate_package(package, expected_content_id=dump.content_id, expected_category=dump.category,
-                             expected_version=dump.build_version)
+            validate_dump_package(package, dump)
             # Windows rename fails if a concurrent build has already published this name.
             if os.name == 'nt':
                 package.rename(final)

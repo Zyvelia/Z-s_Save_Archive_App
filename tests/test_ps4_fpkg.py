@@ -13,6 +13,7 @@ from zarchive.ps4_fpkg import (
     build_packages, check_batch, inspect_dump, run_orbis, scan_build_inputs, scan_dumps,
     validate_package, write_gp4,
 )
+from zarchive.storage import read_param_sfo
 
 
 BASE_ID = 'UP0001-CUSA12345_00-GAMECONTENTID000'
@@ -25,8 +26,11 @@ def make_dump(folder, category, content=BASE_ID, **changes):
     fields.update(changes)
     keys, values, table = bytearray(), bytearray(), bytearray()
     for name, value in fields.items():
-        raw = value.encode() + b'\0'
-        table.extend(struct.pack('<HHIII', len(keys), 0x204, len(raw), len(raw), len(values)))
+        if isinstance(value, int):
+            format_code, raw = 0x0404, struct.pack('<I', value)
+        else:
+            format_code, raw = 0x0204, value.encode() + b'\0'
+        table.extend(struct.pack('<HHIII', len(keys), format_code, len(raw), len(raw), len(values)))
         keys.extend(name.encode() + b'\0')
         values.extend(raw)
     system = folder / 'sce_sys'
@@ -39,8 +43,8 @@ def make_dump(folder, category, content=BASE_ID, **changes):
     return folder
 
 
-def make_package(package, dump, *, content_id=BASE_ID):
-    sfo = (dump / 'sce_sys' / 'param.sfo').read_bytes()
+def make_package(package, dump, *, content_id=BASE_ID, param_sfo=None):
+    sfo = (param_sfo or dump / 'sce_sys' / 'param.sfo').read_bytes()
     header_size = 0x2000
     sfo_offset = header_size + 32
     data = bytearray(sfo_offset + len(sfo))
@@ -398,6 +402,54 @@ class FpkgTests(unittest.TestCase):
         self.assertIn(f'Using selected GP4: {manual}', messages)
         self.assertIn(f'Using existing GP4: {automatic}', messages)
         self.assertNotIn(f'Using existing GP4: {ignored}', messages)
+
+    def test_remaster_base_uses_staged_metadata_and_resumes_with_package_version(self):
+        content_id = 'UP0001-CUSA04195_00-GAMECONTENTID000'
+        source = make_dump(self.dumps / 'Brawlhalla' / 'CUSA04195', 'gd', content_id,
+                           TITLE_ID='CUSA04195', TITLE='Brawlhalla', APP_VER='12.60',
+                           REMASTER_TYPE=1, TARGET_APP_VER='01.00', ATTRIBUTE=2)
+        (source / 'eboot.bin').write_bytes(b'executable')
+        original_sfo = source / 'sce_sys' / 'param.sfo'
+        original_bytes = original_sfo.read_bytes()
+        dump = inspect_dump(source)
+        self.assertTrue(dump.remaster)
+
+        imported = source / 'CUSA04195.gp4'
+        write_gp4(dump, imported)
+        project = ET.parse(imported)
+        project.find('volume/volume_type').text = 'pkg_ps4_remaster'
+        project.write(imported, encoding='utf-8', xml_declaration=True)
+        original_gp4 = imported.read_bytes()
+        _, errors, matches, notices = scan_build_inputs(self.dumps)
+        self.assertFalse(errors or notices)
+        self.assertEqual(matches[source], imported)
+
+        calls = []
+
+        def build(tool, project_path, output, log, progress, cancelled):
+            calls.append(project_path)
+            built = ET.parse(project_path)
+            self.assertEqual(built.findtext('volume/volume_type'), 'pkg_ps4_app')
+            entry = built.find("files/file[@targ_path='sce_sys/param.sfo']")
+            staged = Path(entry.get('orig_path'))
+            self.assertEqual(staged.parent, project_path.parent)
+            fields = read_param_sfo(staged)
+            self.assertEqual((fields['APP_VER'], fields['VERSION'], fields['ATTRIBUTE']), ('01.00', '12.60', '2'))
+            self.assertNotIn('REMASTER_TYPE', fields)
+            self.assertNotIn('TARGET_APP_VER', fields)
+            make_package(output, source, content_id=content_id, param_sfo=staged)
+
+        for mode, gp4s in (('generated', {}), ('imported', matches)):
+            with self.subTest(mode=mode):
+                output = self.output / mode
+                output.mkdir()
+                first = build_packages([dump], self.tool, output, nearby_gp4s=gp4s, runner=build)
+                self.assertIn('[Base v12.60]', first[0].name)
+                resumed = build_packages([dump], self.tool, output, resume=True, runner=self.fail)
+                self.assertEqual(resumed, first)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(original_sfo.read_bytes(), original_bytes)
+        self.assertEqual(imported.read_bytes(), original_gp4)
 
     def test_orbis_streams_progress_and_reports_exit_code(self):
         start = subprocess.Popen
