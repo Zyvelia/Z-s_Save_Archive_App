@@ -132,7 +132,9 @@ Check batch verifies the publishing tool and its ext/sc.exe helper, estimates
 the output size, and flags disk-space and FAT32 file-limit risks. Build selected
 runs the same check. Enable Resume batch and select the same dumps and output
 folder to reuse finished packages after a failure or cancellation. The builder
-checks their content IDs, types, versions, and package structure before reuse.
+checks their content IDs, types, versions, and package structure before reuse. Remaster dumps that
+combine a base game and its update use a temporary standard-base metadata copy.
+The output filename keeps the dumped version. The original dump and GP4 are kept.
 
 Before building, the app checks for a usable base-game eboot.bin and warns
 if a requested keystone is missing. It checks the structure and identity of
