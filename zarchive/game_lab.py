@@ -113,9 +113,9 @@ def inspect_file(path):
     if len(data) != size:
         raise ValueError("Save changed during inspection")
     hint = "Unknown binary"
-    if data.startswith(b"PK\\x03\\x04"):
+    if data.startswith(b"PK\x03\x04"):
         hint = "ZIP-like"
-    elif data.startswith(b"\\x1f\\x8b"):
+    elif data.startswith(b"\x1f\x8b"):
         hint = "GZIP-like"
     elif data.lstrip().startswith((b"{", b"[")):
         try:
