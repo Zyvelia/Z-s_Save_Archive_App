@@ -312,6 +312,10 @@ class Window(ExistingWindow):
 
         BorderlandsWorkspace(self.archive, self.ui_settings, self).exec()
 
+    def open_game_lab(self):
+        from .ui_game_lab import GameLabDialog
+        GameLabDialog(self.archive.root, self).exec()
+
     def _make_section(self, section):
         """Build action panels from existing wired QAction objects (no detached tool copies)."""
         if section == 'Dump to FPKG Builder':
@@ -344,6 +348,10 @@ class Window(ExistingWindow):
             borderlands.setObjectName('newAction')
             borderlands.clicked.connect(self.open_borderlands_editor)
             outer.addWidget(borderlands)
+            lab = QPushButton('Open Game Development Lab')
+            lab.setObjectName('newAction')
+            lab.clicked.connect(self.open_game_lab)
+            outer.addWidget(lab)
         elif section=='PS3 Tools':
             row=QHBoxLayout()
             for label,fn in [('Homebrew Manager',self.homebrew),('Browse PS3 FTP',lambda:self.open_classic('ftp'))]:
