@@ -356,12 +356,11 @@ class Window(ExistingWindow):
             lab.setObjectName('newAction')
             lab.clicked.connect(self.open_game_lab)
             outer.addWidget(lab)
-        elif section=='PS3 Tools':
             pkg_extract = QPushButton('PS4 PKG Extractor (Windows)')
             pkg_extract.setObjectName('newAction')
             pkg_extract.clicked.connect(self.open_pkg_extractor)
             outer.addWidget(pkg_extract)
-
+        elif section=='PS3 Tools':
             row=QHBoxLayout()
             for label,fn in [('Homebrew Manager',self.homebrew),('Browse PS3 FTP',lambda:self.open_classic('ftp'))]:
                 b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(fn);row.addWidget(b)
