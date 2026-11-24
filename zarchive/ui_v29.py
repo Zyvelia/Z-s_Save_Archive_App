@@ -312,6 +312,10 @@ class Window(ExistingWindow):
 
         BorderlandsWorkspace(self.archive, self.ui_settings, self).exec()
 
+    def open_pkg_extractor(self):
+        from .ui_ps4_pkg_extract import PkgExtractionDialog
+        PkgExtractionDialog(self).exec()
+
     def open_game_lab(self):
         from .ui_game_lab import GameLabDialog
         GameLabDialog(self.archive.root, self).exec()
@@ -353,6 +357,11 @@ class Window(ExistingWindow):
             lab.clicked.connect(self.open_game_lab)
             outer.addWidget(lab)
         elif section=='PS3 Tools':
+            pkg_extract = QPushButton('PS4 PKG Extractor (Windows)')
+            pkg_extract.setObjectName('newAction')
+            pkg_extract.clicked.connect(self.open_pkg_extractor)
+            outer.addWidget(pkg_extract)
+
             row=QHBoxLayout()
             for label,fn in [('Homebrew Manager',self.homebrew),('Browse PS3 FTP',lambda:self.open_classic('ftp'))]:
                 b=QPushButton(label);b.setObjectName('newAction');b.clicked.connect(fn);row.addWidget(b)
