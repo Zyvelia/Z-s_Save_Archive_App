@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from .bl3_advanced import list_inventory, COSMETICS
 from .bl3_inplace import save_advanced_with_backup
+from .ui_bl3_visual_builders import WeaponBuilderDialog, SkillTreeDialog
 
 
 class BL3AdvancedDialog(QDialog):
@@ -206,6 +207,10 @@ class BL3AdvancedDialog(QDialog):
             'change supported item levels/Mayhem. Arbitrary parts and '
             'anointment editing require additional compatibility validation.')
         self._inventory(layout, 'character')
+        self._add_button(
+            layout, 'Open Visual Weapon Parts Builder…',
+            self.open_visual_weapon_builder
+        )
 
     def _bank_page(self):
         layout = self._page('Bank & DLC Gear',
@@ -229,7 +234,23 @@ class BL3AdvancedDialog(QDialog):
                          lambda: self._queue({'op': 'max_sdu'}))
         self._add_button(layout, 'Queue unlock skill-tree availability',
                          lambda: self._queue({'op': 'unlock_skill_tree'}))
+        self._add_button(
+            layout, 'Open Individual Skill Tree Editor…',
+            self.open_skill_editor
+        )
         layout.addStretch()
+
+    def open_visual_weapon_builder(self):
+        try:
+            WeaponBuilderDialog(self.details, self._queue, self).exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'Weapon builder unavailable', str(exc))
+
+    def open_skill_editor(self):
+        try:
+            SkillTreeDialog(self.details, self._queue, self).exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'Skill editor unavailable', str(exc))
 
     def _guardian_page(self):
         layout = self._page('Guardian / SDUs',
