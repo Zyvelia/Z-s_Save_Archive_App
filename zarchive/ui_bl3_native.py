@@ -130,6 +130,7 @@ class BL3NativeDialog(QDialog):
         self.profile_tab_index = self.tabs.addTab(self.profile_tab, 'Profile Data')
         self._create_character_design()
         self._create_profile_design()
+        self._create_extra_tabs()
 
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
@@ -205,6 +206,64 @@ class BL3NativeDialog(QDialog):
         root.addWidget(bank)
         root.addStretch(1)
 
+    def _create_extra_tabs(self):
+        """BL3-specific read-only pages with independent source prerequisites."""
+        self.extra_tabs = {}
+        specs = (
+            ('Inventory & Weapons', 'character', 'INVENTORY / WEAPONS',
+             'Weapon part, serial and anointment edits remain unavailable until verified.'),
+            ('Skills & Progression', 'character', 'SKILLS / MISSIONS / MAYHEM / SDUs',
+             'Read-only progression indicators; editing these fields is not yet validated.'),
+            ('Guardian & Vault', 'profile', 'GUARDIAN / VAULT CARDS',
+             'Guardian tokens and Vault Card keys are view-only.'),
+            ('Cosmetics & Bank', 'profile', 'COSMETICS / SHARED BANK',
+             'Unlocked cosmetics and bank totals are view-only.'),
+        )
+        for title, kind, header, note in specs:
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            group = QGroupBox(header)
+            content = QVBoxLayout(group)
+            content.addWidget(self._info(note))
+            view = QPlainTextEdit()
+            view.setReadOnly(True)
+            view.setPlainText('Load the matching save file to view decoded data.')
+            content.addWidget(view)
+            layout.addWidget(group)
+            layout.addStretch()
+            index = self.tabs.addTab(page, title)
+            self.extra_tabs[title] = (index, kind, view)
+
+    def _update_previews(self):
+        for title, (index, kind, view) in self.extra_tabs.items():
+            details = self.loaded.get(kind)
+            if details is None:
+                view.setPlainText('This tab is locked until its file is loaded.')
+                continue
+            preview = details.get('preview', {})
+            if title == 'Inventory & Weapons':
+                fields = {'Inventory entries': details['inventory_count']}
+            elif title == 'Skills & Progression':
+                fields = {key.replace('_', ' ').title(): preview.get(key)
+                          for key in ('mayhem_levels', 'completed_missions',
+                                      'guardian_rank', 'sdus')}
+            elif title == 'Guardian & Vault':
+                fields = {key.replace('_', ' ').title(): preview.get(key)
+                          for key in ('guardian_rank', 'guardian_tokens',
+                                      'vault_card_1_keys', 'vault_card_2_keys',
+                                      'vault_card_3_keys')}
+            else:
+                fields = {
+                    'Bank entries': details['bank_count'],
+                    'Heads unlocked': preview.get('heads_unlocked'),
+                    'Skins unlocked': preview.get('skins_unlocked'),
+                    'SDUs': preview.get('sdus'),
+                }
+            view.setPlainText('\\n'.join(
+                f'{key}: {value if value is not None else "Unavailable"}'
+                for key, value in fields.items()
+            ))
+
     def _selected_profile(self, kind):
         game, platform = self.game.currentData(), self.console.currentData()
         key = next((p.key for p in PROFILES if p.game == game and
@@ -235,6 +294,9 @@ class BL3NativeDialog(QDialog):
             self.game.currentData(), self.console.currentData(), self.loaded)
         self.tabs.setTabEnabled(self.character_tab_index, states['character'])
         self.tabs.setTabEnabled(self.profile_tab_index, states['profile'])
+        for index, kind, view in self.extra_tabs.values():
+            self.tabs.setTabEnabled(index, states[kind])
+        self._update_previews()
         for kind, index in (('character', self.character_tab_index),
                             ('profile', self.profile_tab_index)):
             loaded = self.loaded.get(kind)
