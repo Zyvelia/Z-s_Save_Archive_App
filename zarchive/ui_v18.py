@@ -12,7 +12,7 @@ from .ui_bl3_native import BL3NativeDialog
 
 class EditorWorkspace(QDialog):
     def __init__(self,archive,parent=None):
-        super().__init__(parent);self.archive=archive;self.setWindowTitle('Universal Save Editor');self.resize(1050,740)
+        super().__init__(parent);self.archive=archive;self.setWindowTitle('Universal Save Editor');self.resize(1380,860);self.setMinimumSize(980,650)
         outer=QVBoxLayout(self)
         self.legacy_container=QWidget(self)
         layout=QVBoxLayout(self.legacy_container)
