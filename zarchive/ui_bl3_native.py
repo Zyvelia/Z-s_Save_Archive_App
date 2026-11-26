@@ -491,6 +491,7 @@ class BL3NativeDialog(QDialog):
 
     def console_changed(self, *_):
         self.loaded.clear()
+        self.workshop.clear()
         self.refresh_state()
 
     def refresh_state(self):
@@ -500,7 +501,21 @@ class BL3NativeDialog(QDialog):
         self.tabs.setTabEnabled(self.profile_tab_index, states['profile'])
         for index, kind, view in self.extra_tabs.values():
             self.tabs.setTabEnabled(index, states[kind])
+        self.tabs.setTabEnabled(self.workshop_index, states['character'])
         self._update_previews()
+        for row in range(self.navigation.count()):
+            item = self.navigation.item(row)
+            index = item.data(Qt.ItemDataRole.UserRole)
+            enabled = type(index) is int and self.tabs.isTabEnabled(index)
+            flags = item.flags()
+            item.setFlags(
+                (flags | Qt.ItemFlag.ItemIsEnabled) if enabled
+                else (flags & ~Qt.ItemFlag.ItemIsEnabled)
+            )
+        self.pending_label.setText(
+            f"Loaded saves: {len(self.loaded)}  •  "
+            f"Queued weapon edits: {len(self.workshop.queue)}"
+        )
         for kind, index in (('character', self.character_tab_index),
                             ('profile', self.profile_tab_index)):
             loaded = self.loaded.get(kind)
@@ -528,10 +543,10 @@ class BL3NativeDialog(QDialog):
                 self.tabs.setCurrentIndex(self.character_tab_index)
             elif states['profile']:
                 self.tabs.setCurrentIndex(self.profile_tab_index)
-        else:
+        elif not any_loaded:
             self.status.setPlainText(
-                'Choose a supported game and console, then load a save. '
-                'Character and profile tabs are locked until their own file is loaded.'
+                'Choose a supported console and load a save or profile. '
+                'Matching editing pages unlock after validation.'
             )
         self.character_info.setText(
             'Character save loaded — editing enabled.' if states['character']
@@ -579,6 +594,14 @@ class BL3NativeDialog(QDialog):
 
         self.loaded[kind] = details
         if kind == 'character':
+            self.workshop.load_character(details)
+            self.hero_character.setText(
+                f"{details['character']}  /  {details['class']}"
+            )
+            self.hero_subtitle.setText(
+                f"Level {details['level']}  •  {details['platform']}"
+            )
+            self.class_portrait.setText(details['class'])
             self.character.setText(details['character'])
             self.level.setValue(details['level'])
             self.money.setValue(details['money'])
@@ -602,6 +625,11 @@ class BL3NativeDialog(QDialog):
 
     def unload(self, kind):
         self.loaded.pop(kind, None)
+        if kind == 'character':
+            self.workshop.clear()
+            self.hero_character.setText('NO CHARACTER LOADED')
+            self.hero_subtitle.setText('Load a character save to begin editing.')
+            self.class_portrait.setText('CHARACTER PREVIEW')
         self.refresh_state()
 
     def write_copy(self, kind):
