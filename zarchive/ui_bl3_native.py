@@ -254,7 +254,7 @@ class BL3NativeDialog(QDialog):
     def _sync_nav(self, index):
         for row in range(self.navigation.count()):
             item = self.navigation.item(row)
-            if item.data(Qt.ItemDataRole.UserRole) == index and item.isEnabled():
+            if item.data(Qt.ItemDataRole.UserRole) == index and bool(item.flags() & Qt.ItemFlag.ItemIsEnabled):
                 self.navigation.blockSignals(True)
                 self.navigation.setCurrentRow(row)
                 self.navigation.blockSignals(False)
