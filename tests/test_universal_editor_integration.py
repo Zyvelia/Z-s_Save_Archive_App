@@ -121,9 +121,11 @@ class UniversalEditorQtTests(unittest.TestCase):
                     'money': 10, 'eridium': 0, 'inventory_count': 0, 'xp': 0,
                     'sha256': 'test', 'preview': {},
                 }
-                with patch('zarchive.ui_bl3_native.load_character', return_value=char_details), \\
-                     patch('zarchive.ui_bl3_workshop.list_inventory', return_value=[]), \\
-                     patch('zarchive.ui_bl3_workshop.list_visual_weapons', return_value=[]):
+                with (
+                    patch('zarchive.ui_bl3_native.load_character', return_value=char_details),
+                    patch('zarchive.ui_bl3_workshop.list_inventory', return_value=[]),
+                    patch('zarchive.ui_bl3_workshop.list_visual_weapons', return_value=[]),
+                ):
                     self.assertTrue(editor.open_save(source, 'character'))
                 self.assertTrue(editor.tabs.isVisible())
                 self.assertFalse(editor.empty_hint.isVisible())
