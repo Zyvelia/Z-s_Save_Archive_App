@@ -126,3 +126,43 @@ def set_existing_skill_points(save, index, amount):
     entry.points = amount
     save.save.ability_data.ability_points = new_remaining
     return skill_point_budget(save)
+
+
+def compatible_donor_anointments(save, target_index):
+    """Known generic parts from same-balance donors, excluding Mayhem bonuses.
+
+    The BL3 codec's existing set_anointment() validates the generic-part DB.
+    """
+    target = weapon_part_slots(save, target_index)
+    result = []
+    for donor in compatible_part_sources(save, target_index):
+        obj = _items(save)[donor['item_index']]
+        for name, index in obj._generic_parts:
+            text = str(name)
+            if 'mayhem' in text.casefold():
+                continue
+            if text.casefold() == 'unknown':
+                continue
+            if not _items(save)[target_index].can_have_anointment():
+                continue
+            result.append({
+                'donor_index': donor['item_index'],
+                'asset': text,
+            })
+    return result
+
+
+def transplant_anointment(save, target_index, donor_index, asset):
+    target = weapon_part_slots(save, target_index)
+    donor = weapon_part_slots(save, donor_index)
+    if target['balance'] != donor['balance'] or target['category'] != donor['category']:
+        raise ValueError('Anointments must come from compatible same-balance items.')
+    options = compatible_donor_anointments(save, target_index)
+    if not any(row['donor_index'] == donor_index and row['asset'] == asset for row in options):
+        raise ValueError('That anointment was not found on a compatible donor.')
+    obj = _items(save)[target_index]
+    if obj.set_anointment(asset) is not True:
+        raise ValueError('The codec declined this anointment.')
+    check = weapon_part_slots(save, target_index)
+    if not any(row['asset'] == asset for row in check['anointments']):
+        raise ValueError('Anointment did not survive serial re-encoding.')
