@@ -514,6 +514,9 @@ class BL3NativeDialog(QDialog):
     def console_changed(self, *_):
         self.loaded.clear()
         self.workshop.clear()
+        self.hero_character.setText('NO CHARACTER LOADED')
+        self.hero_subtitle.setText('Load a character save to begin editing.')
+        self.class_portrait.setText('CHARACTER PREVIEW')
         self.refresh_state()
 
     def refresh_state(self):
