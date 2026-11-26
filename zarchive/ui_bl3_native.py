@@ -18,16 +18,13 @@ from .bl3_native import (
     load_character, load_profile, write_character_copy, write_profile_copy,
 )
 from .universal_editor_profiles import PROFILES, validate_profile
+from .game_editor_layouts import section_enabled, layout_for
 
 
 def available_sections(game, platform, loaded_kinds):
     """Pure capability logic shared by the UI and regression tests."""
-    if not game or not platform:
-        return {'character': False, 'profile': False}
     return {
-        kind: (kind in loaded_kinds and any(
-            p.game == game and p.platform == platform and
-            p.file_type.casefold() == kind and p.editable for p in PROFILES))
+        kind: section_enabled(game, platform, kind, loaded_kinds, PROFILES)
         for kind in ('character', 'profile')
     }
 
@@ -68,7 +65,7 @@ class BL3NativeDialog(QDialog):
                 border: 1px solid #36313d; }
         ''')
         root = QVBoxLayout(self)
-        heading = QLabel('BORDERLANDS 3  /  SAVE ENGINEERING')
+        heading = QLabel(layout_for('Borderlands 3').title)
         heading.setStyleSheet('font-size: 21px; font-weight: 700; color: #c8a7ff;')
         root.addWidget(heading)
         desc = QLabel(
