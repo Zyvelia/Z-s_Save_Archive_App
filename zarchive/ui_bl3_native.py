@@ -3,7 +3,8 @@
 The universal launcher still requires an explicit game and console choice.
 Character and profile are independently loaded; their tabs remain disabled
 (grey) until a matching file has been validated by the platform-specific codec.
-Never save one file as the other, and never silently overwrite an existing file.
+Before saving changes, verify an independent backup and then atomically replace
+only the selected source file. Never save one kind as the other.
 """
 from pathlib import Path
 
@@ -15,10 +16,12 @@ from PySide6.QtWidgets import (
 )
 
 from .bl3_native import (
-    load_character, load_profile, write_character_copy, write_profile_copy,
+    load_character, load_profile,
 )
 from .universal_editor_profiles import PROFILES, validate_profile
 from .game_editor_layouts import section_enabled, layout_for
+from .ui_bl3_drop_zone import SaveDropZone
+from .bl3_inplace import save_with_backup
 
 
 def available_sections(game, platform, loaded_kinds):
@@ -70,7 +73,8 @@ class BL3NativeDialog(QDialog):
         root.addWidget(heading)
         desc = QLabel(
             'Select a game and console first. Import character and profile files '
-            'independently. Missing data tabs remain gray and locked.'
+            'independently. Missing data tabs remain gray and locked. '
+            'Save replaces the selected source after creating a verified backup.'
         )
         desc.setWordWrap(True)
         root.addWidget(desc)
@@ -95,23 +99,28 @@ class BL3NativeDialog(QDialog):
         self.source_labels = {}
         self.load_buttons = {}
         self.clear_buttons = {}
+        self.drop_zones = {}
         for index, kind in enumerate(('character', 'profile')):
             label = QLabel('CHARACTER SAVE' if kind == 'character' else 'PROFILE DATA')
             label.setStyleSheet('color: #c9b6e6; font-weight: 600;')
-            self.file_row.addWidget(label, index, 0)
+            self.file_row.addWidget(label, index * 2, 0)
             field = QLineEdit()
             field.setReadOnly(True)
             field.setPlaceholderText('Not loaded — this section is locked')
             self.source_labels[kind] = field
-            self.file_row.addWidget(field, index, 1)
+            self.file_row.addWidget(field, index * 2, 1)
+            drop = SaveDropZone(kind)
+            drop.fileDropped.connect(lambda path, k=kind: self.import_dropped(path, k))
+            self.drop_zones[kind] = drop
+            self.file_row.addWidget(drop, index * 2 + 1, 0, 1, 4)
             load = QPushButton('Load ' + ('save…' if kind == 'character' else 'profile…'))
             load.clicked.connect(lambda checked=False, k=kind: self.choose_file(k))
             self.load_buttons[kind] = load
-            self.file_row.addWidget(load, index, 2)
+            self.file_row.addWidget(load, index * 2, 2)
             clear = QPushButton('Unload')
             clear.clicked.connect(lambda checked=False, k=kind: self.unload(k))
             self.clear_buttons[kind] = clear
-            self.file_row.addWidget(clear, index, 3)
+            self.file_row.addWidget(clear, index * 2, 3)
 
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
@@ -121,16 +130,17 @@ class BL3NativeDialog(QDialog):
         self.profile_tab_index = self.tabs.addTab(self.profile_tab, 'Profile Data')
         self._create_character_design()
         self._create_profile_design()
+        self._create_extra_tabs()
 
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
         self.status.setMaximumHeight(85)
         root.addWidget(self.status)
         actions = QHBoxLayout()
-        self.export_character_button = QPushButton('Export character copy…')
+        self.export_character_button = QPushButton('Save character + backup')
         self.export_character_button.clicked.connect(lambda: self.write_copy('character'))
         actions.addWidget(self.export_character_button)
-        self.export_profile_button = QPushButton('Export profile copy…')
+        self.export_profile_button = QPushButton('Save profile + backup')
         self.export_profile_button.clicked.connect(lambda: self.write_copy('profile'))
         actions.addWidget(self.export_profile_button)
         close = QPushButton('Close')
@@ -196,6 +206,64 @@ class BL3NativeDialog(QDialog):
         root.addWidget(bank)
         root.addStretch(1)
 
+    def _create_extra_tabs(self):
+        """BL3-specific read-only pages with independent source prerequisites."""
+        self.extra_tabs = {}
+        specs = (
+            ('Inventory & Weapons', 'character', 'INVENTORY / WEAPONS',
+             'Weapon part, serial and anointment edits remain unavailable until verified.'),
+            ('Skills & Progression', 'character', 'SKILLS / MISSIONS / MAYHEM / SDUs',
+             'Read-only progression indicators; editing these fields is not yet validated.'),
+            ('Guardian & Vault', 'profile', 'GUARDIAN / VAULT CARDS',
+             'Guardian tokens and Vault Card keys are view-only.'),
+            ('Cosmetics & Bank', 'profile', 'COSMETICS / SHARED BANK',
+             'Unlocked cosmetics and bank totals are view-only.'),
+        )
+        for title, kind, header, note in specs:
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            group = QGroupBox(header)
+            content = QVBoxLayout(group)
+            content.addWidget(self._info(note))
+            view = QPlainTextEdit()
+            view.setReadOnly(True)
+            view.setPlainText('Load the matching save file to view decoded data.')
+            content.addWidget(view)
+            layout.addWidget(group)
+            layout.addStretch()
+            index = self.tabs.addTab(page, title)
+            self.extra_tabs[title] = (index, kind, view)
+
+    def _update_previews(self):
+        for title, (index, kind, view) in self.extra_tabs.items():
+            details = self.loaded.get(kind)
+            if details is None:
+                view.setPlainText('This tab is locked until its file is loaded.')
+                continue
+            preview = details.get('preview', {})
+            if title == 'Inventory & Weapons':
+                fields = {'Inventory entries': details['inventory_count']}
+            elif title == 'Skills & Progression':
+                fields = {key.replace('_', ' ').title(): preview.get(key)
+                          for key in ('mayhem_levels', 'completed_missions',
+                                      'guardian_rank', 'sdus')}
+            elif title == 'Guardian & Vault':
+                fields = {key.replace('_', ' ').title(): preview.get(key)
+                          for key in ('guardian_rank', 'guardian_tokens',
+                                      'vault_card_1_keys', 'vault_card_2_keys',
+                                      'vault_card_3_keys')}
+            else:
+                fields = {
+                    'Bank entries': details['bank_count'],
+                    'Heads unlocked': preview.get('heads_unlocked'),
+                    'Skins unlocked': preview.get('skins_unlocked'),
+                    'SDUs': preview.get('sdus'),
+                }
+            view.setPlainText('\\n'.join(
+                f'{key}: {value if value is not None else "Unavailable"}'
+                for key, value in fields.items()
+            ))
+
     def _selected_profile(self, kind):
         game, platform = self.game.currentData(), self.console.currentData()
         key = next((p.key for p in PROFILES if p.game == game and
@@ -226,6 +294,9 @@ class BL3NativeDialog(QDialog):
             self.game.currentData(), self.console.currentData(), self.loaded)
         self.tabs.setTabEnabled(self.character_tab_index, states['character'])
         self.tabs.setTabEnabled(self.profile_tab_index, states['profile'])
+        for index, kind, view in self.extra_tabs.values():
+            self.tabs.setTabEnabled(index, states[kind])
+        self._update_previews()
         for kind, index in (('character', self.character_tab_index),
                             ('profile', self.profile_tab_index)):
             loaded = self.loaded.get(kind)
@@ -234,8 +305,9 @@ class BL3NativeDialog(QDialog):
             else:
                 self.source_labels[kind].setText(loaded['path'])
             self.clear_buttons[kind].setEnabled(loaded is not None)
-            self.load_buttons[kind].setEnabled(
-                self._selected_profile(kind) is not None)
+            supported = self._selected_profile(kind) is not None
+            self.load_buttons[kind].setEnabled(supported)
+            self.drop_zones[kind].setEnabled(supported)
         self.export_character_button.setEnabled(states['character'])
         self.export_profile_button.setEnabled(states['profile'])
         for kind, widgets in (
@@ -260,6 +332,10 @@ class BL3NativeDialog(QDialog):
             'Profile data loaded — editing enabled.' if states['profile']
             else 'Profile file missing: tab locked.')
 
+    def import_dropped(self, path, kind):
+        """A dropped external source is edited directly only after backup."""
+        self.open_save(Path(path), kind)
+
     def choose_file(self, kind):
         try:
             profile = self._selected_profile(kind)
@@ -269,7 +345,7 @@ class BL3NativeDialog(QDialog):
         if profile is None:
             return
         name, _ = QFileDialog.getOpenFileName(
-            self, 'Load ' + kind + ' from protected working copy',
+            self, 'Load ' + kind + ' save (backup created before editing)',
             str(self.working), 'All files (*)')
         if name:
             self.open_save(Path(name), kind)
@@ -283,8 +359,8 @@ class BL3NativeDialog(QDialog):
             if profile is None:
                 raise ValueError('Choose a supported game and console first.')
             resolved = path.resolve(strict=True)
-            if path.is_symlink() or not resolved.is_relative_to(self.working) or not resolved.is_file():
-                raise ValueError('Choose a regular file inside the protected working copy.')
+            if path.is_symlink() or not resolved.is_file():
+                raise ValueError('Choose a regular save file, not a link or folder.')
             details = (load_character(resolved, profile.platform) if kind == 'character'
                        else load_profile(resolved, profile.platform))
             if details['kind'] != kind or details['platform'] != profile.platform:
@@ -326,29 +402,37 @@ class BL3NativeDialog(QDialog):
                 self.game.currentData(), self.console.currentData(), self.loaded)[kind]:
             return
         source = Path(details['path'])
-        suggested = source.with_name(source.stem + '_edited' + source.suffix)
-        output, _ = QFileDialog.getSaveFileName(
-            self, f'Export edited {kind} to new file', str(suggested), 'All files (*)')
-        if not output:
+        confirmation = QMessageBox.question(
+            self, 'Save and back up original',
+            f'This will modify the selected {kind} file in place:\n{source}\n\n'
+            'An independent verified copy will be created first in '
+            'ZSaveArchive_Backups beside the file. Continue?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
             return
         try:
-            if kind == 'character':
-                written = write_character_copy(
-                    source, output, name=self.character.text(),
-                    level=self.level.value(), money=self.money.value(),
-                    eridium=self.eridium.value(), platform=details['platform'],
-                    expected_sha256=details['sha256'])
-            else:
-                written = write_profile_copy(
-                    source, output, golden_keys=self.golden_keys.value(),
-                    diamond_keys=self.diamond_keys.value(), platform=details['platform'],
-                    expected_sha256=details['sha256'])
+            values = (
+                {'name': self.character.text(), 'level': self.level.value(),
+                 'money': self.money.value(), 'eridium': self.eridium.value()}
+                if kind == 'character' else
+                {'golden_keys': self.golden_keys.value(),
+                 'diamond_keys': self.diamond_keys.value()}
+            )
+            written, backup = save_with_backup(
+                source, kind=kind, platform=details['platform'],
+                expected_sha256=details['sha256'], **values)
         except (OSError, ValueError, RuntimeError) as exc:
-            QMessageBox.warning(self, 'Export failed', str(exc))
+            QMessageBox.warning(self, 'Save failed; review backup', str(exc))
             return
-        self.status.setPlainText(f'Verified {kind} copy saved: {written}')
+        # Reload from disk to refresh the expected SHA and all displayed values.
+        self.open_save(written, kind)
+        self.status.setPlainText(
+            f'Updated {kind} source: {written}\nVerified backup: {backup}')
         QMessageBox.information(
-            self, 'New save exported',
-            'Created a new edited copy. Keep the original. '
-            'For PS4, Apollo restoration requires the expected original filename and folder.'
+            self, 'Save updated and backed up',
+            f'Source edited: {written}\nBackup: {backup}\n'
+            'For PS4, Apollo must still restore the edited export '
+            'to the console save container.'
         )
