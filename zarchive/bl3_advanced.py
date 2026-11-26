@@ -145,11 +145,23 @@ def write_advanced_copy(source, destination, *, expected_sha256, platform,
 
     def change(save):
         for action in actions:
-            _action(save, kind, action)
-        expected.append(_fingerprint(save, kind))
+            try:
+                _action(save, kind, action)
+            except Exception as exc:
+                raise ValueError(
+                    f"Could not apply {action['op']} safely: {exc}") from exc
+        try:
+            expected.append(_fingerprint(save, kind))
+        except Exception as exc:
+            raise ValueError(f'Could not inspect edited fields: {exc}') from exc
 
     def verify(check):
-        return bool(expected) and _fingerprint(check, kind) == expected[0]
+        if not expected:
+            return False
+        try:
+            return _fingerprint(check, kind) == expected[0]
+        except Exception:
+            return False
 
     return _publish(source, destination, expected_sha256, platform, kind, change, verify)
 
