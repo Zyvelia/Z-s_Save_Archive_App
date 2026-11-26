@@ -15,7 +15,7 @@ from .universal_editor_profiles import PROFILES, validate_profile
 
 
 class BL3NativeDialog(QDialog):
-    def __init__(self, working, parent=None, default_profile='bl3-ps4-character'):
+    def __init__(self, working, parent=None):
         super().__init__(parent)
         self.working = Path(working)
         self.details = None
@@ -33,8 +33,7 @@ class BL3NativeDialog(QDialog):
         layout.addLayout(form)
 
         # Require an explicit game -> console -> save-type selection every time.
-        # Context from the archive is shown as a suggestion, never auto-applied.
-        self.suggested_profile = default_profile
+        # No game or console is preselected, including when launched from BL3.
         self.game = QComboBox()
         self.game.addItem('Select game…', None)
         for game in dict.fromkeys(item.game for item in PROFILES):
