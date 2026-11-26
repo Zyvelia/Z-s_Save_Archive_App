@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from .borderlands_edit import EDITORS, match_editor, open_editor, stage_save, validate_editor
+from .ui_bl3_native import BL3NativeDialog
 from .ui_v21 import TaskWorker
 
 
@@ -85,13 +86,17 @@ class BorderlandsWorkspace(QDialog):
         self.prepare_button.clicked.connect(self.prepare)
         self.launch_button = QPushButton('Open editor')
         self.launch_button.clicked.connect(self.launch)
+        self.native_button = QPushButton('Universal Save Editor…')
+        self.native_button.setToolTip('Profile-based BL3 PC and PS4 character/profile editor. Writes a verified copy.')
+        self.native_button.clicked.connect(self.open_native)
         self.open_folder = QPushButton('Open copy folder')
         self.open_folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.working))))
         self.import_button = QPushButton('Archive edited copy')
         self.import_button.clicked.connect(self.import_copy)
         close = QPushButton('Close')
         close.clicked.connect(self.close)
-        for button in (self.prepare_button, self.launch_button, self.open_folder, self.import_button, close):
+        for button in (self.prepare_button, self.launch_button, self.native_button,
+                       self.open_folder, self.import_button, close):
             actions.addWidget(button)
         layout.addLayout(actions)
 
@@ -143,6 +148,8 @@ class BorderlandsWorkspace(QDialog):
             widget.setEnabled(idle)
         self.prepare_button.setEnabled(idle and bool(self.source.text().strip() or self.archived.currentData()))
         self.launch_button.setEnabled(idle and self.working is not None)
+        self.native_button.setEnabled(idle and self.working is not None and
+                                      self.game.currentData().key in ('bl3_ps4', 'bl3_pc'))
         self.copy_path.setEnabled(self.working is not None)
         self.open_folder.setEnabled(self.working is not None)
         self.import_button.setEnabled(idle and self.working is not None)
@@ -219,6 +226,11 @@ class BorderlandsWorkspace(QDialog):
             self.status.setText(f'{name} is open. Load the working file and save your changes to that copy.')
             self.process_timer.start()
             self.update_actions()
+
+    def open_native(self):
+        if self.working is None or self.game.currentData().key not in ('bl3_ps4', 'bl3_pc'):
+            return
+        BL3NativeDialog(self.working, self).exec()
 
     def check_editor(self):
         code = self.process.poll()
