@@ -12,6 +12,10 @@ are deliberately NOT implemented here.
 from __future__ import annotations
 
 from .bl3_native import _publish, _read_codec
+from .bl3_visual_builders import (
+    weapon_part_slots, transplant_part, skill_rows, skill_point_budget,
+    set_existing_skill_points, transplant_anointment,
+)
 
 MAX_ITEMS = 2500
 MAX_ACTIONS = 40
@@ -77,6 +81,21 @@ def _action(save, kind, action):
             if not item.can_have_mayhem():
                 raise ValueError('Selected item cannot be assigned a Mayhem level.')
             item.mayhem_level = _int(action['level'], 'Item Mayhem', 0, 10)
+        elif op == 'weapon_part':
+            transplant_part(save, _int(action['index'], 'Target item', 0, MAX_ITEMS),
+                            _int(action['slot'], 'Target slot', 0, 63),
+                            _int(action['donor_index'], 'Donor item', 0, MAX_ITEMS),
+                            _int(action['donor_slot'], 'Donor slot', 0, 63))
+        elif op == 'weapon_anointment':
+            transplant_anointment(
+                save,
+                _int(action['index'], 'Target item', 0, MAX_ITEMS),
+                _int(action['donor_index'], 'Donor item', 0, MAX_ITEMS),
+                str(action['asset']))
+        elif op == 'skill_points':
+            set_existing_skill_points(
+                save, _int(action['index'], 'Skill index', 0, 1024),
+                _int(action['points'], 'Skill points', 0, 100))
         elif op == 'mayhem_all':
             save.set_all_mayhem_level(_int(action['level'], 'Mayhem', 0, 11))
         elif op == 'max_sdu':
@@ -118,6 +137,9 @@ def _fingerprint(save, kind):
             'mayhem': tuple(save.get_pt_mayhem_levels()),
             'sdus': tuple(sorted(save.get_sdus().items())),
             'skill_tree_grade': save.save.ability_data.tree_grade,
+            'skill_points_remaining': save.save.ability_data.ability_points,
+            'skill_tree': tuple((x['asset'], x['points'], x['max_points'], x['tree'])
+                                for x in skill_rows(save)),
         }
     return {
         'bank': tuple(item.get_serial_base64() for item in save.get_bank_items()),
@@ -186,3 +208,21 @@ def list_inventory(source, platform, kind):
             'code': field(item.get_serial_base64),
         })
     return records
+
+
+def list_visual_weapons(source, platform):
+    """Decoded weapon parts for compatible weapon swapping controls."""
+    save = _read_codec(source, platform, 'character')
+    result = []
+    for index in range(len(save.get_items())):
+        try:
+            result.append(weapon_part_slots(save, index))
+        except (ValueError, AttributeError, AssertionError, KeyError, IndexError):
+            continue
+    return result
+
+
+def list_skill_tree(source, platform):
+    """Existing skills only; no fabricated skill IDs or point budget."""
+    save = _read_codec(source, platform, 'character')
+    return {'rows': skill_rows(save), 'budget': skill_point_budget(save)}
