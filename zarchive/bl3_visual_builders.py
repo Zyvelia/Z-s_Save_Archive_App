@@ -71,6 +71,8 @@ def transplant_part(save, target_index, target_slot, donor_index, donor_slot):
         raise ValueError('Invalid target part slot.')
     if type(donor_slot) is not int or not 0 <= donor_slot < len(donor['parts']):
         raise ValueError('Invalid donor part slot.')
+    if donor_slot != target_slot:
+        raise ValueError('Only matching part positions may be swapped safely.')
     obj = _items(save)[target_index]
     source = _items(save)[donor_index]
     replacement = source._parts[donor_slot]
