@@ -168,6 +168,9 @@ class BL3NativeDialog(QDialog):
         if console_index < 0:
             raise ValueError('The selected platform is not registered for this game.')
         self.console.setCurrentIndex(console_index)
+        # Changing away from a game must discard previously loaded source
+        # references, even when returning to the same console later.
+        self.console_changed()
         self.game.setEnabled(not self.embedded)
         self.console.setEnabled(not self.embedded)
 
