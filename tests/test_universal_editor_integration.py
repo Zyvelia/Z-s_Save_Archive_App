@@ -96,6 +96,54 @@ class UniversalEditorQtTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_bl3_layout_navigation_and_save_file_gating(self):
+        from unittest.mock import patch
+        from zarchive.ui_v18 import EditorWorkspace
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / '1.sav'
+            source.write_bytes(b'GVAS' + b'0' * 40)
+            window = EditorWorkspace(FakeArchive(root))
+            window.show()
+            try:
+                window.game_target.setCurrentIndex(window.game_target.findData('bl3'))
+                editor = window.native
+                self.assertTrue(editor.navigation.isVisible())
+                self.assertEqual(editor.navigation.count(), 9)
+                self.assertIs(editor.workspace_split.widget(0), editor.navigation)
+                self.assertTrue(editor.empty_hint.isVisible())
+                editor.console.setCurrentIndex(editor.console.findData('PS4'))
+                self.assertTrue(editor.load_buttons['character'].isEnabled())
+                self.assertTrue(editor.drop_zones['profile'].isEnabled())
+                char_details = {
+                    'path': str(source), 'kind': 'character', 'platform': 'PS4',
+                    'character': 'Zane', 'class': 'Operative', 'level': 1,
+                    'money': 10, 'eridium': 0, 'inventory_count': 0, 'xp': 0,
+                    'sha256': 'test', 'preview': {},
+                }
+                with patch('zarchive.ui_bl3_native.load_character', return_value=char_details), \\
+                     patch('zarchive.ui_bl3_workshop.list_inventory', return_value=[]), \\
+                     patch('zarchive.ui_bl3_workshop.list_visual_weapons', return_value=[]):
+                    self.assertTrue(editor.open_save(source, 'character'))
+                self.assertTrue(editor.tabs.isVisible())
+                self.assertFalse(editor.empty_hint.isVisible())
+                self.assertEqual(editor.hero_character.text(), 'Zane  /  Operative')
+                self.assertTrue(editor.tabs.isTabEnabled(editor.workshop_index))
+                self.assertFalse(editor.tabs.isTabEnabled(editor.profile_tab_index))
+                self.assertEqual(editor.navigation.item(0).text(), 'CHARACTER')
+                for row in range(editor.navigation.count()):
+                    item = editor.navigation.item(row)
+                    if item.data(0x0100) == editor.workshop_index:
+                        editor.navigation.setCurrentRow(row)
+                        break
+                self.assertEqual(editor.tabs.currentIndex(), editor.workshop_index)
+                editor.unload('character')
+                self.assertFalse(editor.tabs.isVisible())
+                self.assertFalse(editor.export_character_button.isEnabled())
+                self.assertEqual(editor.workshop.queue, [])
+            finally:
+                window.close()
+
 
 if __name__ == '__main__':
     unittest.main()
