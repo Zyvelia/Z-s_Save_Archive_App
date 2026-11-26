@@ -230,9 +230,7 @@ class BorderlandsWorkspace(QDialog):
     def open_native(self):
         if self.working is None or self.game.currentData().key not in ('bl3_ps4', 'bl3_pc'):
             return
-        profile = ('bl3-ps4-character' if self.game.currentData().key == 'bl3_ps4'
-                   else 'bl3-pc-character')
-        BL3NativeDialog(self.working, self, default_profile=profile).exec()
+        BL3NativeDialog(self.working, self).exec()
 
     def check_editor(self):
         code = self.process.poll()
