@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from zarchive.bl3_visual_builders import (
     weapon_part_slots, compatible_part_sources, transplant_part,
+    compatible_donor_anointments, transplant_anointment,
     skill_rows, skill_point_budget, set_existing_skill_points,
 )
 from zarchive.bl3_advanced import _action, _fingerprint
@@ -21,6 +22,14 @@ class FakeItem:
         self.level = 15
         self.changed_parts = False
         self.deparsed = False
+
+    def can_have_anointment(self):
+        return True
+
+    def set_anointment(self, name):
+        self._generic_parts = [(name, 8)]
+        self.changed_parts = True
+        return True
 
     def _deparse_serial(self):
         self.deparsed = True
@@ -81,8 +90,23 @@ class VisualBuilderTests(unittest.TestCase):
         self.assertTrue(self.save.items[0].deparsed)
         self.assertEqual(weapon_part_slots(self.save, 0)['parts'][0]['asset'], 'Barrel_B')
 
+    def test_anointment_from_compatible_donor(self):
+        self.save.items[1]._generic_parts.append((
+            '/Game/Anointments/AnointA', 8))
+        choices = compatible_donor_anointments(self.save, 0)
+        self.assertEqual(choices[0]['donor_index'], 1)
+        transplant_anointment(self.save, 0, 1, '/Game/Anointments/AnointA')
+        self.assertEqual(
+            weapon_part_slots(self.save, 0)['anointments'][0]['asset'],
+            '/Game/Anointments/AnointA',
+        )
+
+    def test_incompatible_anointment_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'compatible'):
+            transplant_anointment(self.save, 0, 2, '/Fake/Anointment')
+
     def test_incompatible_weapon_and_invalid_slot_rejected(self):
-        for donor, slot in [(2, 0), (1, 99)]:
+        for donor, slot in [(2, 0), (1, 99), (1, 1)]:
             with self.subTest(donor=donor, slot=slot):
                 with self.assertRaises(ValueError):
                     transplant_part(self.save, 0, slot, donor, 0)
