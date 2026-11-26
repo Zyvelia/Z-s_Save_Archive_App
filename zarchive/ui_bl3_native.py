@@ -404,7 +404,7 @@ class BL3NativeDialog(QDialog):
         source = Path(details['path'])
         confirmation = QMessageBox.question(
             self, 'Save and back up original',
-            f'This will modify the selected {kind} file in place:\\n{source}\\n\\n'
+            f'This will modify the selected {kind} file in place:\n{source}\n\n'
             'An independent verified copy will be created first in '
             'ZSaveArchive_Backups beside the file. Continue?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -429,10 +429,10 @@ class BL3NativeDialog(QDialog):
         # Reload from disk to refresh the expected SHA and all displayed values.
         self.open_save(written, kind)
         self.status.setPlainText(
-            f'Updated {kind} source: {written}\\nVerified backup: {backup}')
+            f'Updated {kind} source: {written}\nVerified backup: {backup}')
         QMessageBox.information(
             self, 'Save updated and backed up',
-            f'Source edited: {written}\\nBackup: {backup}\\n'
+            f'Source edited: {written}\nBackup: {backup}\n'
             'For PS4, Apollo must still restore the edited export '
             'to the console save container.'
         )
