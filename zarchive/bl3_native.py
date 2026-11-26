@@ -95,6 +95,14 @@ def load_character(path, platform='PS4'):
     }
 
 
+def _count_unlocked(save, method):
+    """Count actual unlocked cosmetics, not the game's possible-item total."""
+    try:
+        return len(getattr(save, method)())
+    except (AttributeError, KeyError, IndexError, ValueError, TypeError):
+        return None
+
+
 def load_profile(path, platform='PS4'):
     source = _source(path)
     validate_profile(f'bl3-{platform.lower()}-profile')
@@ -109,16 +117,15 @@ def load_profile(path, platform='PS4'):
         'save_type': save.sg_type,
         'platform': platform,
         'kind': 'profile',
-        'preview': _preview(save, {
+        'preview': dict(_preview(save, {
             'guardian_rank': 'get_guardian_rank',
             'guardian_tokens': 'get_guardian_rank_tokens',
             'vault_card_1_keys': 'get_vaultcard1_keys',
             'vault_card_2_keys': 'get_vaultcard2_keys',
             'vault_card_3_keys': 'get_vaultcard3_keys',
-            'heads_unlocked': 'get_char_heads_total',
-            'skins_unlocked': 'get_char_skins_total',
             'sdus': 'get_sdus',
-        }),
+        }), heads_unlocked=_count_unlocked(save, 'get_char_heads'),
+            skins_unlocked=_count_unlocked(save, 'get_char_skins')),
     }
 
 
