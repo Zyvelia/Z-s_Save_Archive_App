@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from .ps4_fpkg import CATEGORIES, build_packages, check_batch, read_existing_gp4, scan_build_inputs, validate_tool
+from .ps4_build_modes import BUILD_MODES, choose_build_dumps
 from .ui_preferences import choose_sort, sorted_by, valid_sort
 
 PACKAGE_SORT_FIELDS = ('Game', 'Title ID', 'Version', 'Package type', 'GP4', 'Dump path')
@@ -108,7 +109,15 @@ class FpkgPanel(QWidget):
         self.existing_base.setPlaceholderText('Optional · for a patch-only build')
         self.base_button = add('Existing base PKG', self.existing_base, lambda: self.choose_file(
             self.existing_base, 'Choose an existing base package', 'PS4 package (*.pkg)'))
+        self.existing_base.setToolTip('Required for Update only. Must match the update\'s CUSA and CONTENT_ID.')
         options = QHBoxLayout()
+        self.build_mode = QComboBox()
+        for key, title in BUILD_MODES.items():
+            self.build_mode.addItem(title, key)
+        self.build_mode.setToolTip('Selected: old behavior. Separate: Base and Patch become independent PKGs. Update only needs a matching existing base PKG.')
+        self.build_mode.currentIndexChanged.connect(self.update_buttons)
+        options.addWidget(QLabel('Build mode'))
+        options.addWidget(self.build_mode)
         self.keystone = QCheckBox('Preserve sce_sys/keystone')
         self.keystone.setChecked(True)
         options.addWidget(self.keystone)
@@ -221,7 +230,7 @@ class FpkgPanel(QWidget):
         active = self.worker is not None
         for widget in (self.tool, self.tool_button, self.source, self.source_button,
                        self.output, self.output_button, self.existing_base, self.base_button,
-                       self.tree, self.keystone, self.storage, self.sort_button, self.resume):
+                       self.tree, self.keystone, self.storage, self.sort_button, self.resume, self.build_mode):
             widget.setEnabled(not active)
         self.scan_button.setEnabled(not active and bool(self.source.text().strip()))
         selected = not active and self.scan_path is not None and bool(self.selected())
@@ -368,13 +377,21 @@ class FpkgPanel(QWidget):
         if not self.save_tool():
             return
         output = self.output.text().strip()
-        args = (self.selected(), self.tool.text().strip(), output)
+        mode = self.build_mode.currentData()
+        try:
+            chosen = choose_build_dumps(self.selected(), mode, existing_base=self.existing_base.text().strip())
+        except ValueError as error:
+            self.status.setText(str(error))
+            self.log.appendPlainText(str(error))
+            self.log_toggle.setChecked(True)
+            return
+        args = (chosen, self.tool.text().strip(), output)
         filesystem = bytes(QStorageInfo(output).fileSystemType()).decode('ascii', errors='replace')
         options = dict(preserve_keystone=self.keystone.isChecked(),
                        existing_base=self.existing_base.text().strip(),
                        resume=self.resume.isChecked(), filesystem=filesystem)
         self.bar.setRange(0, 0)
-        self.status.setText('Checking selected packages…')
+        self.status.setText(f'Checking {self.build_mode.currentText()}…')
         self.log.clear()
         self.log_toggle.setChecked(True)
         worker = PackageWorker(check_batch, *args, **options)
