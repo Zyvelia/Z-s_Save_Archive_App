@@ -14,7 +14,7 @@ import struct
 KEYS = {
     ('PC', 'character'): (
         '713436b35663255feae28373f498b8182ee5422e50a20f498724e6659af07cd7',
-        '7c076983317e0c825f2e367f76b4a271382b6e87390502c6cda133f9b6',
+        '7c076983317e0c825f2e367f76b4a271382b6e87390502c6cdd8b1cca133f9b6',
     ),
     ('PS4', 'character'): (
         'd17bbf754cc180303792bdd0183e4a5f43a246a0eddb2d9f565f8b3d6e73e6b8',
@@ -30,6 +30,12 @@ KEYS = {
     ),
 }
 KEYS = {key: tuple(bytes.fromhex(part) for part in pair) for key, pair in KEYS.items()}
+
+# Fail immediately on transcription mistakes instead of producing a mysterious
+# IndexError halfway through PS4/PC game-level encoding.
+for _key, (_prefix, _xor) in KEYS.items():
+    if len(_prefix) != 32 or len(_xor) != 32:
+        raise RuntimeError(f'Invalid BL3 cipher key length for {_key}.')
 
 
 def gvas_payload_bounds(data: bytes):
