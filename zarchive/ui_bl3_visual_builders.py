@@ -82,6 +82,7 @@ class WeaponBuilderDialog(QDialog):
             entry.setData(Qt.ItemDataRole.UserRole, weapon['item_index'])
             self.targets.addItem(entry)
         self.targets.currentItemChanged.connect(self.target_changed)
+        self.part_list.currentItemChanged.connect(self.donor_changed)
         self.donors.currentIndexChanged.connect(self.donor_changed)
         if self.targets.count():
             self.targets.setCurrentRow(0)
@@ -125,7 +126,12 @@ class WeaponBuilderDialog(QDialog):
                 'Import a compatible weapon code first, then reopen the builder.'
             )
             return
+        target_part = self.part_list.currentItem()
+        position = (target_part.data(Qt.ItemDataRole.UserRole)
+                    if target_part is not None else None)
         for part in donor['parts']:
+            if part['slot'] != position:
+                continue
             self.donor_parts.addItem(
                 f"{part['slot']:02d}  {_short_asset(part['asset'])}",
                 part['slot']
@@ -137,7 +143,7 @@ class WeaponBuilderDialog(QDialog):
                 if asset.casefold() != 'unknown' and 'mayhem' not in asset.casefold():
                     self.donor_anointments.addItem(_short_asset(asset), asset)
         self.message.setText(
-            'Only currently decoded part slots and donor anointments are available.'
+            'Only matching part positions and donor anointments are available.'
         )
 
     def selected_target(self):
@@ -172,7 +178,7 @@ class WeaponBuilderDialog(QDialog):
         part = self.part_list.currentItem()
         donor_slot = self.donor_parts.currentData()
         if target is None or donor is None or part is None or donor_slot is None:
-            self.message.setText('Choose a target, target part and compatible donor part.')
+            self.message.setText('Choose a target, part slot, and compatible donor with that slot.')
             return
         self.queue_action({
             'op': 'weapon_part',
