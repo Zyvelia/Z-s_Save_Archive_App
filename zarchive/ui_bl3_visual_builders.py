@@ -57,9 +57,15 @@ class WeaponBuilderDialog(QDialog):
         edit_layout.addWidget(QLabel('DONOR PART'))
         self.donor_parts = QComboBox()
         edit_layout.addWidget(self.donor_parts)
+        edit_layout.addWidget(QLabel('DONOR ANOINTMENT (optional)'))
+        self.donor_anointments = QComboBox()
+        edit_layout.addWidget(self.donor_anointments)
         button = QPushButton('Queue selected part replacement')
         button.clicked.connect(self.add_action)
         edit_layout.addWidget(button)
+        anointment_button = QPushButton('Queue donor anointment')
+        anointment_button.clicked.connect(self.add_anointment)
+        edit_layout.addWidget(anointment_button)
         split.addWidget(edit_box)
         split.setSizes([380, 540])
         self.message = QLabel()
@@ -111,6 +117,7 @@ class WeaponBuilderDialog(QDialog):
 
     def donor_changed(self, *_):
         self.donor_parts.clear()
+        self.donor_anointments.clear()
         donor = self.selected_donor()
         if donor is None:
             self.message.setText(
@@ -123,7 +130,15 @@ class WeaponBuilderDialog(QDialog):
                 f"{part['slot']:02d}  {_short_asset(part['asset'])}",
                 part['slot']
             )
-        self.message.setText('Only currently decoded part slots are available.')
+        target = self.selected_target()
+        if target is not None and target['balance'] == donor['balance']:
+            for anointment in donor['anointments']:
+                asset = anointment['asset']
+                if asset.casefold() != 'unknown' and 'mayhem' not in asset.casefold():
+                    self.donor_anointments.addItem(_short_asset(asset), asset)
+        self.message.setText(
+            'Only currently decoded part slots and donor anointments are available.'
+        )
 
     def selected_target(self):
         item = self.targets.currentItem()
@@ -135,6 +150,21 @@ class WeaponBuilderDialog(QDialog):
     def selected_donor(self):
         index = self.donors.currentData()
         return next((w for w in self.weapons if w['item_index'] == index), None)
+
+    def add_anointment(self):
+        target = self.selected_target()
+        donor = self.selected_donor()
+        asset = self.donor_anointments.currentData()
+        if target is None or donor is None or not asset:
+            self.message.setText('Choose a compatible donor containing an anointment.')
+            return
+        self.queue_action({
+            'op': 'weapon_anointment',
+            'index': target['item_index'],
+            'donor_index': donor['item_index'],
+            'asset': asset,
+        })
+        self.message.setText('Anointment transfer queued; verification runs before saving.')
 
     def add_action(self):
         target = self.selected_target()
