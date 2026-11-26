@@ -201,7 +201,12 @@ class BL3NativeDialog(QDialog):
         game, platform = self.game.currentData(), self.console.currentData()
         key = next((p.key for p in PROFILES if p.game == game and
                     p.platform == platform and p.file_type.casefold() == kind), None)
-        return validate_profile(key) if key else None
+        if key is None:
+            return None
+        try:
+            return validate_profile(key)
+        except ValueError:
+            return None
 
     def game_changed(self, *_):
         self.console.blockSignals(True)
@@ -272,6 +277,8 @@ class BL3NativeDialog(QDialog):
 
     def open_save(self, path, kind):
         """Load only the requested kind, preserving the other independent file."""
+        self.loaded.pop(kind, None)
+        self.refresh_state()
         try:
             profile = self._selected_profile(kind)
             if profile is None:
