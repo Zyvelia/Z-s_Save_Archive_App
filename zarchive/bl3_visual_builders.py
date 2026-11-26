@@ -89,6 +89,41 @@ def transplant_part(save, target_index, target_slot, donor_index, donor_slot):
         raise ValueError('Weapon part did not survive serialization.')
 
 
+def transplant_part_experimental(save, target_index, target_slot,
+                                 donor_index, donor_slot):
+    """Try a different-balance donor in a disposable, separately saved copy.
+
+    Experimental mode relaxes only the same-balance rule. Both items must
+    still decode using the same inventory-part database category and match
+    positional part slots; mixing unrelated item serial schemas cannot be
+    represented safely by this codec. This method never writes a file itself.
+    """
+    target = weapon_part_slots(save, target_index)
+    donor = weapon_part_slots(save, donor_index)
+    if target_index == donor_index:
+        raise ValueError('Choose a different donor item.')
+    if target['category'] != donor['category']:
+        raise ValueError(
+            'Different part database categories are not serial-compatible. '
+            'This experiment requires a shared category.'
+        )
+    if type(target_slot) is not int or not 0 <= target_slot < len(target['parts']):
+        raise ValueError('Invalid target part slot.')
+    if type(donor_slot) is not int or donor_slot != target_slot or not 0 <= donor_slot < len(donor['parts']):
+        raise ValueError('Experimental swaps require matching valid slot positions.')
+    obj = _items(save)[target_index]
+    donor_obj = _items(save)[donor_index]
+    replacement = donor_obj._parts[donor_slot]
+    if str(replacement[0]).casefold() == 'unknown':
+        raise ValueError('Cannot transplant an unknown part.')
+    obj._parts[target_slot] = replacement
+    obj.changed_parts = True
+    obj._deparse_serial()
+    obj._update_superclass_serial()
+    actual = weapon_part_slots(save, target_index)
+    if actual['parts'][target_slot]['asset'] != str(replacement[0]):
+        raise ValueError('Experimental part failed re-serialization.')
+
 def skill_rows(save):
     ability = save.save.ability_data
     rows = []

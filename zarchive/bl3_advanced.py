@@ -15,7 +15,7 @@ from .bl3_native import _publish, _read_codec
 from .bl3_reference_catalog import normalize_item_code
 from .bl3_visual_builders import (
     weapon_part_slots, transplant_part, skill_rows, skill_point_budget,
-    set_existing_skill_points, transplant_anointment,
+    set_existing_skill_points, transplant_anointment, transplant_part_experimental,
 )
 
 MAX_ITEMS = 2500
@@ -51,7 +51,7 @@ def _code(value):
     return normalize_item_code(value)
 
 
-def _action(save, kind, action):
+def _action(save, kind, action, *, experimental_allowed=False):
     op = action['op']
     if kind == 'character':
         if op == 'item_add':
@@ -82,6 +82,14 @@ def _action(save, kind, action):
                             _int(action['slot'], 'Target slot', 0, 63),
                             _int(action['donor_index'], 'Donor item', 0, MAX_ITEMS),
                             _int(action['donor_slot'], 'Donor slot', 0, 63))
+        elif op == 'weapon_part_experiment':
+            if not experimental_allowed:
+                raise ValueError('Experimental edits must be exported to a new file.')
+            transplant_part_experimental(
+                save, _int(action['index'], 'Target item', 0, MAX_ITEMS),
+                _int(action['slot'], 'Target slot', 0, 63),
+                _int(action['donor_index'], 'Donor item', 0, MAX_ITEMS),
+                _int(action['donor_slot'], 'Donor slot', 0, 63))
         elif op == 'weapon_anointment':
             transplant_anointment(
                 save,
@@ -151,7 +159,7 @@ def _fingerprint(save, kind):
 
 
 def write_advanced_copy(source, destination, *, expected_sha256, platform,
-                        kind, actions):
+                        kind, actions, experimental_allowed=False):
     """Edit multiple actions in one validated, all-or-nothing output file."""
     if kind not in ('character', 'profile'):
         raise ValueError('Choose Character or Profile.')
@@ -159,12 +167,14 @@ def write_advanced_copy(source, destination, *, expected_sha256, platform,
         raise ValueError('Choose 1–40 editing actions.')
     if not all(isinstance(x, dict) and isinstance(x.get('op'), str) for x in actions):
         raise ValueError('Invalid editing action.')
+    if experimental_allowed and kind != 'character':
+        raise ValueError('Experimental mode supports character inventories only.')
     expected = []
 
     def change(save):
         for action in actions:
             try:
-                _action(save, kind, action)
+                _action(save, kind, action, experimental_allowed=experimental_allowed)
             except Exception as exc:
                 raise ValueError(
                     f"Could not apply {action['op']} safely: {exc}") from exc
