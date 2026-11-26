@@ -348,10 +348,7 @@ class Window(ExistingWindow):
             outer.addLayout(row)
         elif section=='Save Editor':
             b=QPushButton('Open Universal Save Editor');b.setObjectName('newAction');b.clicked.connect(self.editor_ui);outer.addWidget(b)
-            borderlands = QPushButton('Open Borderlands Save Editor')
-            borderlands.setObjectName('newAction')
-            borderlands.clicked.connect(self.open_borderlands_editor)
-            outer.addWidget(borderlands)
+            outer.addWidget(txt('Built-in game editors (including Borderlands 3 PC/PS4) are available through the Universal Save Editor game selector.',12,True))
             lab = QPushButton('Open Game Development Lab')
             lab.setObjectName('newAction')
             lab.clicked.connect(self.open_game_lab)
