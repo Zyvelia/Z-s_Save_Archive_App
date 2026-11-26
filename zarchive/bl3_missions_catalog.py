@@ -34,9 +34,16 @@ class MissionDefinition:
 
 
 def mission_key(value: str) -> str:
-    """Canonical last asset name for matching _C save class paths and .uasset files."""
+    """Match UE class references and asset filenames by canonical basename."""
     candidate = str(value).replace('\\', '/').split('/')[-1]
-    candidate = re.sub(r'\\.(?:uasset|uexp)
+    for suffix in ('.uasset', '.uexp'):
+        if candidate.casefold().endswith(suffix):
+            candidate = candidate[:-len(suffix)]
+            break
+    candidate = candidate.split('.')[-1]
+    if candidate.casefold().endswith('_c'):
+        candidate = candidate[:-2]
+    return candidate.casefold()
 
 
 def classify_mission(path: str) -> str:
