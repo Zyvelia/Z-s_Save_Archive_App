@@ -19,9 +19,12 @@ class EditorWorkspace(QDialog):
         outer.addWidget(QLabel('Choose a built-in game editor or use an installed definition for another archived game.'))
         targets=QHBoxLayout();outer.addLayout(targets);targets.addWidget(QLabel('Game target:'))
         self.game_target=QComboBox();self.game_target.addItem('All archived games / installed definitions',None)
+        # One entry per game. The built-in game editor owns platform selection.
+        self.game_target.addItem('Borderlands 3 · Built-in editor', 'bl3')
         for g in GAME_TARGETS:
-            self.game_target.addItem(
-                f"{g['name']} · {g['platform']} · {g['status']}", g['id'])
+            if builtin_target(g['id']):
+                continue
+            self.game_target.addItem(f"{g['name']} · {g['status']}", g['id'])
         targets.addWidget(self.game_target,1)
         self.target_info=QLabel('Only installed, validated editor definitions enable editing.');self.target_info.setWordWrap(True)
         layout.addWidget(self.target_info)
@@ -64,7 +67,7 @@ class EditorWorkspace(QDialog):
 
     def refresh_mode(self):
         target_id=self.game_target.currentData()
-        builtin=builtin_target(target_id)
+        builtin=('Borderlands 3', None) if target_id == 'bl3' else builtin_target(target_id)
         if builtin and self._shown_builtin != target_id:
             self.native.set_target(*builtin)
         self._shown_builtin=target_id if builtin else None
@@ -78,7 +81,11 @@ class EditorWorkspace(QDialog):
         selected=self.selected();self.saves.clear()
         rows=self.archive.list_saves(query=self.query.text())[:2000]
         target_id=self.game_target.currentData()
-        if target_id:rows=matching_saves(rows,target_id)
+        if target_id == 'bl3':
+            rows=[row for row in rows if str(row.get('game','')).casefold().strip() in
+                  ('borderlands 3', 'borderlands3', 'bl3')]
+        elif target_id:
+            rows=matching_saves(rows,target_id)
         for row in rows:
             from PySide6.QtWidgets import QListWidgetItem
             item=QListWidgetItem(f"{row['game']}  ·  {row['label']}  [{row['platform']}]  {row['title_id']}")
@@ -87,8 +94,10 @@ class EditorWorkspace(QDialog):
         if self.saves.count() and self.saves.currentRow()<0:self.saves.setCurrentRow(0)
         self.refresh_editors()
         target=target_by_id(target_id)
-        if target and builtin_target(target_id):
-            self.target_info.setText(f"{target['name']} · {target['platform']} · Built-in editor available.")
+        if target_id == 'bl3':
+            self.target_info.setText('Borderlands 3 · Choose PC or PS4 below to enable supported editing.')
+        elif target and builtin_target(target_id):
+            self.target_info.setText(f"{target['name']} · Built-in editor available.")
         elif target:
             self.target_info.setText(f"{target['name']} · {target['status']}. Needed: {target['sample']}. This is a placeholder, NOT a functional game editor.")
         else:self.target_info.setText('Select an archived save and a matching installed definition. No PS3 game editor is bundled.')
