@@ -46,6 +46,10 @@ def _read_codec(path, platform, kind):
     _, _, actual_kind = gvas_payload_bounds(payload)
     if actual_kind != kind:
         raise ValueError(f'Selected a {kind} profile but this file is a {actual_kind} save.')
+    # Recognize an Apollo-exported PS4 save opened with the PC profile.
+    if platform == 'PC' and b'OAK-PATCHAWSPS4' in payload[:256]:
+        raise ValueError('This is a PS4 Borderlands 3 save. Select PS4 in the '
+                         'Console dropdown, then load the file again.')
     pc_bytes = convert_platform(payload, platform, 'PC', expected_kind=kind)
     with tempfile.TemporaryDirectory(prefix='bl3-codec-') as temp:
         pc_file = Path(temp) / 'decoded.sav'
@@ -53,8 +57,18 @@ def _read_codec(path, platform, kind):
         try:
             return _codec(kind)(str(pc_file))
         except Exception as exc:
-            raise ValueError('The save cannot be decoded with the selected platform profile. '
-                             'Check PC vs PS4 and whether Apollo exported decrypted files.') from exc
+            explanation = str(exc).replace('\\n', ' ').strip()
+            if len(explanation) > 360:
+                explanation = explanation[:357] + '...'
+            if not explanation:
+                explanation = '(the codec returned no details)'
+            raise ValueError(
+                'Borderlands 3 GVAS framing was accepted, but the '
+                f'{kind} data decoder failed ({type(exc).__name__}): '
+                + explanation
+                + '. This may be a game-version/protobuf compatibility issue; '
+                  'your original save has not been modified.'
+            ) from exc
 
 
 def _preview(save, methods):
