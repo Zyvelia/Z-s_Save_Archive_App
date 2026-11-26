@@ -7,6 +7,8 @@ from pathlib import Path
 import json, hashlib
 
 GAME_TARGETS = (
+    {'id':'bl3-pc','name':'Borderlands 3','aliases':('Borderlands 3','Borderlands3','BL3'), 'platform':'PC','status':'Built-in editor','priority':0,'sample':'Load a PC GVAS character or profile file'},
+    {'id':'bl3-ps4','name':'Borderlands 3','aliases':('Borderlands 3','Borderlands3','BL3'), 'platform':'PS4','status':'Built-in editor','priority':0,'sample':'Load an Apollo-exported PS4 GVAS character or profile file'},
     {'id':'borderlands-2','name':'Borderlands 2','aliases':('Borderlands 2','Borderlands2','BL2'), 'platform':'PS3','status':'Awaiting decrypted sample','priority':1,'sample':'Two Apollo-decrypted copies from the same character, with only one known change such as money'},
     {'id':'borderlands-1','name':'Borderlands (2009)','aliases':('Borderlands','Borderlands GOTY'), 'platform':'PS3','status':'Planned','priority':2,'sample':'Two decrypted saves of the same character'},
     {'id':'diablo-3','name':'Diablo III','aliases':('Diablo III','Diablo 3'), 'platform':'PS3','status':'Planned','priority':3,'sample':'Decrypted character samples'},
@@ -16,6 +18,17 @@ GAME_TARGETS = (
     {'id':'skyrim','name':'The Elder Scrolls V: Skyrim','aliases':('Skyrim','The Elder Scrolls V: Skyrim'), 'platform':'PS3','status':'Planned','priority':7,'sample':'Two decrypted character saves'},
     {'id':'gran-turismo-5','name':'Gran Turismo 5','aliases':('Gran Turismo 5','GT5'), 'platform':'PS3','status':'Planned','priority':8,'sample':'Decrypted save samples'},
 )
+
+BUILTIN_TARGETS = {
+    'bl3-pc': ('Borderlands 3', 'PC'),
+    'bl3-ps4': ('Borderlands 3', 'PS4'),
+}
+
+
+def builtin_target(game_id):
+    """Return (game, platform) only for functional native editor targets."""
+    return BUILTIN_TARGETS.get(game_id)
+
 
 def target_by_id(game_id):
     return next((dict(g) for g in GAME_TARGETS if g['id']==game_id),None)

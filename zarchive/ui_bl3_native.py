@@ -34,8 +34,11 @@ def available_sections(game, platform, loaded_kinds):
 
 
 class BL3NativeDialog(QDialog):
-    def __init__(self, working, parent=None):
+    def __init__(self, working, parent=None, *, embedded=False):
         super().__init__(parent)
+        self.embedded = bool(embedded)
+        if self.embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.working = Path(working).resolve()
         self.loaded = {}
         self.setWindowTitle('Universal Save Editor | Borderlands 3')
@@ -144,11 +147,32 @@ class BL3NativeDialog(QDialog):
         self.export_profile_button = QPushButton('Save profile + backup')
         self.export_profile_button.clicked.connect(lambda: self.write_copy('profile'))
         actions.addWidget(self.export_profile_button)
-        close = QPushButton('Close')
-        close.clicked.connect(self.reject)
-        actions.addWidget(close)
+        if not self.embedded:
+            close = QPushButton('Close')
+            close.clicked.connect(self.reject)
+            actions.addWidget(close)
         root.addLayout(actions)
         self.game_changed()
+
+    def set_target(self, game, platform):
+        """Bind the built-in editor to the universal workspace's explicit target.
+
+        Changing the target unloads both source files; console controls inside
+        the embedded editor are read-only to prevent conflicting selections.
+        """
+        game_index = self.game.findData(game)
+        if game_index < 0:
+            raise ValueError('No custom editor layout is installed for this game.')
+        self.game.setCurrentIndex(game_index)
+        console_index = self.console.findData(platform)
+        if console_index < 0:
+            raise ValueError('The selected platform is not registered for this game.')
+        self.console.setCurrentIndex(console_index)
+        # Changing away from a game must discard previously loaded source
+        # references, even when returning to the same console later.
+        self.console_changed()
+        self.game.setEnabled(not self.embedded)
+        self.console.setEnabled(not self.embedded)
 
     def _spin(self, low=0, high=2_000_000_000):
         box = QSpinBox()

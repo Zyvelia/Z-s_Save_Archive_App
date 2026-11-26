@@ -7,16 +7,21 @@ from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLab
 from .ui_v17 import Window as BaseWindow
 from .ui_v04 import STYLE
 from .editor_v18 import ArchiveV18
-from .game_targets_v19 import GAME_TARGETS, matching_saves, target_by_id
+from .game_targets_v19 import GAME_TARGETS, matching_saves, target_by_id, builtin_target
+from .ui_bl3_native import BL3NativeDialog
 
 class EditorWorkspace(QDialog):
     def __init__(self,archive,parent=None):
-        super().__init__(parent);self.archive=archive;self.setWindowTitle('Universal Save Editor · v1.9');self.resize(920,680)
-        layout=QVBoxLayout(self)
-        layout.addWidget(QLabel('Select a game target and an archived save. Planned game placeholders cannot edit files. Decrypt PS3 payloads with Apollo first.'))
-        targets=QHBoxLayout();layout.addLayout(targets);targets.addWidget(QLabel('Game target:'))
+        super().__init__(parent);self.archive=archive;self.setWindowTitle('Universal Save Editor');self.resize(1050,740)
+        outer=QVBoxLayout(self)
+        self.legacy_container=QWidget(self)
+        layout=QVBoxLayout(self.legacy_container)
+        outer.addWidget(QLabel('Choose a built-in game editor or use an installed definition for another archived game.'))
+        targets=QHBoxLayout();outer.addLayout(targets);targets.addWidget(QLabel('Game target:'))
         self.game_target=QComboBox();self.game_target.addItem('All archived games / installed definitions',None)
-        for g in GAME_TARGETS:self.game_target.addItem(f"{g['name']} · {g['status']}",g['id'])
+        for g in GAME_TARGETS:
+            self.game_target.addItem(
+                f"{g['name']} · {g['platform']} · {g['status']}", g['id'])
         targets.addWidget(self.game_target,1)
         self.target_info=QLabel('Only installed, validated editor definitions enable editing.');self.target_info.setWordWrap(True)
         layout.addWidget(self.target_info)
@@ -40,7 +45,33 @@ class EditorWorkspace(QDialog):
         footer.addStretch();close=QPushButton('Close');close.clicked.connect(self.reject);footer.addWidget(close)
         self.game_target.currentIndexChanged.connect(self.refresh_saves);self.query.textChanged.connect(self.refresh_saves);self.saves.currentRowChanged.connect(self.refresh_editors)
         self.import_btn.clicked.connect(self.import_editor);self.inspect.clicked.connect(self.inspect_fields);self.export.clicked.connect(self.export_copy)
+        outer.addWidget(self.legacy_container,1)
+        # Functional built-in game editors share this same workspace.
+        # The legacy declarative editor remains available for other games.
+        self.native = BL3NativeDialog(self.archive.root, self, embedded=True)
+        outer.addWidget(self.native, 1)
+        self.native.hide()
+        self.builtin_footer = QWidget(self)
+        builtin_actions=QHBoxLayout(self.builtin_footer)
+        builtin_actions.addStretch()
+        builtin_close=QPushButton('Close')
+        builtin_close.clicked.connect(self.reject)
+        builtin_actions.addWidget(builtin_close)
+        outer.addWidget(self.builtin_footer)
+        self.builtin_footer.hide()
+        self._shown_builtin = None
         self.refresh_saves()
+
+    def refresh_mode(self):
+        target_id=self.game_target.currentData()
+        builtin=builtin_target(target_id)
+        if builtin and self._shown_builtin != target_id:
+            self.native.set_target(*builtin)
+        self._shown_builtin=target_id if builtin else None
+        self.native.setVisible(bool(builtin))
+        self.builtin_footer.setVisible(bool(builtin))
+        self.legacy_container.setVisible(not bool(builtin))
+
     def selected(self):
         item=self.saves.currentItem();return item.data(0x0100) if item else None
     def refresh_saves(self):
@@ -56,9 +87,12 @@ class EditorWorkspace(QDialog):
         if self.saves.count() and self.saves.currentRow()<0:self.saves.setCurrentRow(0)
         self.refresh_editors()
         target=target_by_id(target_id)
-        if target:
+        if target and builtin_target(target_id):
+            self.target_info.setText(f"{target['name']} · {target['platform']} · Built-in editor available.")
+        elif target:
             self.target_info.setText(f"{target['name']} · {target['status']}. Needed: {target['sample']}. This is a placeholder, NOT a functional game editor.")
         else:self.target_info.setText('Select an archived save and a matching installed definition. No PS3 game editor is bundled.')
+        self.refresh_mode()
     def refresh_editors(self,*_):
         self.plugin.clear();self.clear_fields()
         r=self.selected()
