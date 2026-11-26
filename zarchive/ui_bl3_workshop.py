@@ -94,6 +94,7 @@ class WeaponWorkshop(QWidget):
         self.parts.setReadOnly(True)
         self.parts.setMaximumHeight(125)
         right.addWidget(self.parts)
+        right.addWidget(QLabel('COMPATIBLE PART / ANOINTMENT DONOR'))
         donor_row = QHBoxLayout()
         self.donor = QComboBox()
         donor_row.addWidget(self.donor, 1)
@@ -103,6 +104,13 @@ class WeaponWorkshop(QWidget):
         swap = QPushButton('Queue compatible part swap')
         swap.clicked.connect(self.queue_part)
         right.addWidget(swap)
+        self.anointment = QComboBox()
+        self.anointment.setToolTip('Known donor anointments only; unavailable for unsupported weapon serials.')
+        right.addWidget(self.anointment)
+        add_anoint = QPushButton('Queue donor anointment')
+        add_anoint.clicked.connect(self.queue_anointment)
+        right.addWidget(add_anoint)
+        self.donor.currentIndexChanged.connect(self.update_donor_anointments)
         self.serial = QLineEdit()
         self.serial.setReadOnly(True)
         right.addWidget(self.serial)
@@ -114,7 +122,7 @@ class WeaponWorkshop(QWidget):
         right.addStretch(1)
         split.addWidget(details)
         split.setSizes([370, 590])
-        self.editor_buttons = (add, duplicate, level_action, mayhem_action, swap, copy_code)
+        self.editor_buttons = (add, duplicate, level_action, mayhem_action, swap, add_anoint, copy_code)
         self.clear()
 
     def clear(self):
@@ -125,9 +133,11 @@ class WeaponWorkshop(QWidget):
         self.item_list.clear()
         self.donor.clear()
         self.part_slot.clear()
+        self.anointment.clear()
         self.parts.clear()
         self.serial.clear()
         self.item_name.setText('Select an inventory item')
+        self.asset_info.setText('Weapon art is not bundled; decoded item data appears below.')
         self.summary.setText('Character save not loaded')
         self.queue_info.setText('0 pending changes')
         self.refresh_actions()
@@ -142,6 +152,7 @@ class WeaponWorkshop(QWidget):
         self.mayhem.setEnabled(allowed)
         self.donor.setEnabled(allowed)
         self.part_slot.setEnabled(allowed)
+        self.anointment.setEnabled(allowed)
 
     def load_character(self, details):
         self.clear()
@@ -186,6 +197,7 @@ class WeaponWorkshop(QWidget):
         self.serial.clear()
         self.donor.clear()
         self.part_slot.clear()
+        self.anointment.clear()
         if record is None:
             self.item_name.setText('Select an inventory item')
             return
@@ -193,6 +205,7 @@ class WeaponWorkshop(QWidget):
         self.level.setValue(record['level'] if isinstance(record['level'], int) else 1)
         self.mayhem.setValue(record['mayhem'] if isinstance(record['mayhem'], int) else 0)
         self.serial.setText(record.get('code') or '')
+        self.asset_info.setText('Decoded item: ' + str(record.get('balance') or 'Unknown balance'))
         current = self.weapon_parts.get(record['index'])
         if not current:
             self.parts.setPlainText('Part editing is unavailable for this item serial.')
@@ -208,6 +221,29 @@ class WeaponWorkshop(QWidget):
             self.donor.addItem(f"Donor #{entry['item_index']}", entry['item_index'])
         for part in current['parts']:
             self.part_slot.addItem(f"Slot {part['slot']}", part['slot'])
+        self.update_donor_anointments()
+
+    def update_donor_anointments(self, *_):
+        self.anointment.clear()
+        donor = self.weapon_parts.get(self.donor.currentData())
+        if donor is None:
+            return
+        for entry in donor.get('anointments', ()):
+            asset = str(entry['asset'])
+            if 'mayhem' in asset.casefold() or 'unknown' in asset.casefold():
+                continue
+            self.anointment.addItem(asset.rsplit('/', 1)[-1], asset)
+
+    def queue_anointment(self):
+        index = self.selected_index()
+        donor = self.donor.currentData()
+        asset = self.anointment.currentData()
+        if index is None or donor is None or not asset:
+            QMessageBox.information(self, 'No compatible anointment',
+                'Choose a same-balance donor with a decoded anointment.')
+            return
+        self.enqueue({'op': 'weapon_anointment', 'index': index,
+                      'donor_index': donor, 'asset': asset})
 
     def enqueue(self, action):
         if self.details is None:
