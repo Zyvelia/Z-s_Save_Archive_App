@@ -43,7 +43,7 @@ class BL3NativeDialog(QDialog):
         self.loaded = {}
         self.setWindowTitle('Universal Save Editor | Borderlands 3')
         self.resize(940, 650)
-        self.setMinimumSize(760, 540)
+        self.setMinimumSize(720, 440)
         self.setStyleSheet('''
             QDialog { background: #14121c; color: #e8e4f6; }
             QLabel { color: #ddd8ef; }
@@ -90,8 +90,11 @@ class BL3NativeDialog(QDialog):
             self.game.addItem(game, game)
             if layout_for(game) is None:
                 self.game.model().item(self.game.count() - 1).setEnabled(False)
-        picker.addWidget(QLabel('Game'))
+        self.game_label = QLabel('Game')
+        picker.addWidget(self.game_label)
         picker.addWidget(self.game, 2)
+        self.game_label.setVisible(not self.embedded)
+        self.game.setVisible(not self.embedded)
         self.console = QComboBox()
         picker.addWidget(QLabel('Console'))
         picker.addWidget(self.console, 1)
@@ -128,6 +131,17 @@ class BL3NativeDialog(QDialog):
 
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
+        self.empty_hint = QLabel(
+            'Select PC or PS4, then load or drop your character save and/or profile. '
+            'Editing tabs unlock only after a matching file is successfully decoded.'
+        )
+        self.empty_hint.setWordWrap(True)
+        self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_hint.setStyleSheet(
+            'background:#211b2c; border:1px dashed #53456b; '
+            'border-radius:8px; color:#bcb1d0; padding:36px;'
+        )
+        root.addWidget(self.empty_hint, 1)
         self.character_tab = QWidget()
         self.profile_tab = QWidget()
         self.character_tab_index = self.tabs.addTab(self.character_tab, 'Character Save')
@@ -154,25 +168,22 @@ class BL3NativeDialog(QDialog):
         root.addLayout(actions)
         self.game_changed()
 
-    def set_target(self, game, platform):
-        """Bind the built-in editor to the universal workspace's explicit target.
+    def set_target(self, game, platform=None):
+        """Select the game without locking the console dropdown.
 
-        Changing the target unloads both source files; console controls inside
-        the embedded editor are read-only to prevent conflicting selections.
+        The main universal selector owns game selection; each game's custom
+        editor independently selects an available console. Switching either
+        value unloads character/profile files and locks their tabs.
         """
         game_index = self.game.findData(game)
         if game_index < 0:
             raise ValueError('No custom editor layout is installed for this game.')
         self.game.setCurrentIndex(game_index)
-        console_index = self.console.findData(platform)
-        if console_index < 0:
-            raise ValueError('The selected platform is not registered for this game.')
-        self.console.setCurrentIndex(console_index)
-        # Changing away from a game must discard previously loaded source
-        # references, even when returning to the same console later.
+        console_index = self.console.findData(platform) if platform else 0
+        self.console.setCurrentIndex(max(0, console_index))
         self.console_changed()
         self.game.setEnabled(not self.embedded)
-        self.console.setEnabled(not self.embedded)
+        self.console.setEnabled(True)
 
     def _spin(self, low=0, high=2_000_000_000):
         box = QSpinBox()
@@ -320,7 +331,15 @@ class BL3NativeDialog(QDialog):
         self.console.addItem('Select console…', None)
         for platform in dict.fromkeys(
                 p.platform for p in PROFILES if p.game == self.game.currentData()):
-            self.console.addItem(platform, platform)
+            supported = any(
+                p.editable for p in PROFILES
+                if p.game == self.game.currentData() and p.platform == platform
+            )
+            self.console.addItem(
+                platform if supported else platform + ' (planned)', platform
+            )
+            if not supported:
+                self.console.model().item(self.console.count() - 1).setEnabled(False)
         self.console.blockSignals(False)
         self.console_changed()
 
@@ -347,6 +366,9 @@ class BL3NativeDialog(QDialog):
             supported = self._selected_profile(kind) is not None
             self.load_buttons[kind].setEnabled(supported)
             self.drop_zones[kind].setEnabled(supported)
+        any_loaded=states['character'] or states['profile']
+        self.tabs.setVisible(any_loaded)
+        self.empty_hint.setVisible(not any_loaded)
         self.export_character_button.setEnabled(states['character'])
         self.export_profile_button.setEnabled(states['profile'])
         for kind, widgets in (
@@ -355,10 +377,11 @@ class BL3NativeDialog(QDialog):
         ):
             for widget in widgets:
                 widget.setEnabled(states[kind])
-        if states['character']:
-            self.tabs.setCurrentIndex(self.character_tab_index)
-        elif states['profile']:
-            self.tabs.setCurrentIndex(self.profile_tab_index)
+        if any_loaded and not self.tabs.isTabEnabled(self.tabs.currentIndex()):
+            if states['character']:
+                self.tabs.setCurrentIndex(self.character_tab_index)
+            elif states['profile']:
+                self.tabs.setCurrentIndex(self.profile_tab_index)
         else:
             self.status.setPlainText(
                 'Choose a supported game and console, then load a save. '
