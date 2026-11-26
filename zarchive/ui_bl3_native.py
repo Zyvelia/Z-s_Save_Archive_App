@@ -221,6 +221,7 @@ class BL3NativeDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, index)
             self.navigation.addItem(item)
         self.navigation.currentItemChanged.connect(self._navigate)
+        self.tabs.currentChanged.connect(self._sync_nav)
 
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
@@ -250,11 +251,25 @@ class BL3NativeDialog(QDialog):
         if type(index) is int and self.tabs.isTabEnabled(index):
             self.tabs.setCurrentIndex(index)
 
+    def _sync_nav(self, index):
+        for row in range(self.navigation.count()):
+            item = self.navigation.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == index and item.isEnabled():
+                self.navigation.blockSignals(True)
+                self.navigation.setCurrentRow(row)
+                self.navigation.blockSignals(False)
+                break
+
     def save_character_page(self):
-        if self.tabs.currentIndex() == self.workshop_index and self.workshop.queue:
+        page = self.tabs.currentIndex()
+        if self.page_kinds.get(page) == 'profile':
+            self.write_copy('profile')
+        elif page == self.workshop_index and self.workshop.queue:
             self.workshop.save_pending()
-        else:
+        elif 'character' in self.loaded:
             self.write_copy('character')
+        elif 'profile' in self.loaded:
+            self.write_copy('profile')
 
     def set_target(self, game, platform=None):
         """Select the game without locking the console dropdown.
@@ -523,7 +538,7 @@ class BL3NativeDialog(QDialog):
             f"Loaded saves: {len(self.loaded)}  •  "
             f"Queued weapon edits: {len(self.workshop.queue)}"
         )
-        self.export_profile_button.setVisible(states['profile'])
+        self.export_profile_button.hide()
         for kind, index in (('character', self.character_tab_index),
                             ('profile', self.profile_tab_index)):
             loaded = self.loaded.get(kind)
@@ -539,7 +554,7 @@ class BL3NativeDialog(QDialog):
         any_loaded=states['character'] or states['profile']
         self.tabs.setVisible(any_loaded)
         self.empty_hint.setVisible(not any_loaded)
-        self.export_character_button.setEnabled(states['character'])
+        self.export_character_button.setEnabled(any_loaded)
         self.export_profile_button.setEnabled(states['profile'])
         for kind, widgets in (
             ('character', (self.character, self.level, self.money, self.eridium)),
@@ -557,6 +572,7 @@ class BL3NativeDialog(QDialog):
                 'Choose a supported console and load a save or profile. '
                 'Matching editing pages unlock after validation.'
             )
+        self._sync_nav(self.tabs.currentIndex())
         self.character_info.setText(
             'Character save loaded — editing enabled.' if states['character']
             else 'Character save missing: tab locked.')
