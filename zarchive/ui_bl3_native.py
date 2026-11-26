@@ -80,6 +80,8 @@ class BL3NativeDialog(QDialog):
         self.game.addItem('Select game…', None)
         for game in dict.fromkeys(p.game for p in PROFILES):
             self.game.addItem(game, game)
+            if layout_for(game) is None:
+                self.game.model().item(self.game.count() - 1).setEnabled(False)
         picker.addWidget(QLabel('Game'))
         picker.addWidget(self.game, 2)
         self.console = QComboBox()
