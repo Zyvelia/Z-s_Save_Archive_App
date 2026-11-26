@@ -262,6 +262,14 @@ class BL3NativeDialog(QDialog):
 
     def save_character_page(self):
         page = self.tabs.currentIndex()
+        if page != self.workshop_index and self.workshop.queue:
+            QMessageBox.information(
+                self, 'Pending weapon edits',
+                'You have unsaved Weapon Workshop changes. Open Weapon Workshop '
+                'and choose Save + Backup to apply those changes first.'
+            )
+            self.tabs.setCurrentIndex(self.workshop_index)
+            return
         if self.page_kinds.get(page) == 'profile':
             self.write_copy('profile')
         elif page == self.workshop_index and self.workshop.queue:
@@ -604,6 +612,11 @@ class BL3NativeDialog(QDialog):
     def open_save(self, path, kind):
         """Load only the requested kind, preserving the other independent file."""
         self.loaded.pop(kind, None)
+        if kind == 'character':
+            self.workshop.clear()
+            self.hero_character.setText('NO CHARACTER LOADED')
+            self.hero_subtitle.setText('Load a character save to begin editing.')
+            self.class_portrait.setText('CHARACTER PREVIEW')
         self.refresh_state()
         try:
             profile = self._selected_profile(kind)
