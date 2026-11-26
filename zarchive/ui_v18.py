@@ -19,7 +19,9 @@ class EditorWorkspace(QDialog):
         outer.addWidget(QLabel('Choose a built-in game editor or use an installed definition for another archived game.'))
         targets=QHBoxLayout();outer.addLayout(targets);targets.addWidget(QLabel('Game target:'))
         self.game_target=QComboBox();self.game_target.addItem('All archived games / installed definitions',None)
-        for g in GAME_TARGETS:self.game_target.addItem(f"{g['name']} · {g['status']}",g['id'])
+        for g in GAME_TARGETS:
+            self.game_target.addItem(
+                f"{g['name']} · {g['platform']} · {g['status']}", g['id'])
         targets.addWidget(self.game_target,1)
         self.target_info=QLabel('Only installed, validated editor definitions enable editing.');self.target_info.setWordWrap(True)
         layout.addWidget(self.target_info)
