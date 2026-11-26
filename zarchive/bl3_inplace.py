@@ -26,6 +26,28 @@ def _digest(path):
 
 
 def save_with_backup(source, *, kind, expected_sha256, platform, **values):
+    if kind == 'character':
+        writer = write_character_copy
+    elif kind == 'profile':
+        writer = write_profile_copy
+    else:
+        raise ValueError('Unsupported save type.')
+    return _save_using_writer(source, expected_sha256, platform, writer, values)
+
+
+def save_advanced_with_backup(source, *, kind, expected_sha256, platform, actions):
+    """Apply validated advanced actions using the same verified backup policy."""
+    from .bl3_advanced import write_advanced_copy
+    if kind not in ('character', 'profile'):
+        raise ValueError('Unsupported save type.')
+    def writer(source_path, output, *, expected_sha256, platform, **kwargs):
+        return write_advanced_copy(source_path, output, kind=kind,
+                                   expected_sha256=expected_sha256,
+                                   platform=platform, actions=kwargs['actions'])
+    return _save_using_writer(source, expected_sha256, platform, writer, {'actions': actions})
+
+
+def _save_using_writer(source, expected_sha256, platform, writer, values):
     """Return (source_path, backup_path); preserve source if backup fails.
 
     Requires a regular writable file; rejects symlinks and hardlinked files.
@@ -42,13 +64,6 @@ def save_with_backup(source, *, kind, expected_sha256, platform, **values):
         raise PermissionError('Source save is not writable.')
     if _digest(source) != expected_sha256:
         raise ValueError('The source save changed since loading. Reload before editing.')
-    if kind == 'character':
-        writer = write_character_copy
-    elif kind == 'profile':
-        writer = write_profile_copy
-    else:
-        raise ValueError('Unsupported save type.')
-
     backup_dir = source.parent / 'ZSaveArchive_Backups'
     if backup_dir.is_symlink():
         raise ValueError('Backup folder cannot be a symbolic link.')
