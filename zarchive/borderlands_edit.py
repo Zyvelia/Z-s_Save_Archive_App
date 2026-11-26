@@ -40,6 +40,10 @@ EDITORS = (
                       'https://github.com/ZakisM/bl3_save_edit',
                       'Load the decrypted PS4 character save to edit the character. A profile is a separate file.',
                       'Open Inventory or the profile Bank to edit saved gear.'),
+    BorderlandsEditor('bl3_pc', 'Borderlands 3', 'PC', 'Zak’s BL3 Save Editor',
+                      'https://github.com/ZakisM/bl3_save_edit',
+                      'Load a PC Borderlands 3 character save or profile.',
+                      'Use Inventory or Bank to inspect saved gear.'),
     BorderlandsEditor('ttwl_ps4', 'Tiny Tina’s Wonderlands', 'PS4', 'TTWL Save Editor',
                       'https://github.com/xcier/TTWLSaveEditor',
                       'Open the decrypted PS4 character save. Use the character tabs and Raw for exposed fields.',
@@ -56,7 +60,7 @@ def match_editor(editor, row):
     if editor.key == 'bl1_ps3':
         return game == 'borderlands' or game.startswith(('borderlands goty', 'borderlands game of the year'))
     fragment = {'bl2_ps3': 'borderlands 2', 'tps_ps3': 'borderlands the pre sequel',
-                'bl3_ps4': 'borderlands 3', 'ttwl_ps4': 'wonderlands'}[editor.key]
+                'bl3_ps4': 'borderlands 3', 'bl3_pc': 'borderlands 3', 'ttwl_ps4': 'wonderlands'}[editor.key]
     return fragment in game
 
 
