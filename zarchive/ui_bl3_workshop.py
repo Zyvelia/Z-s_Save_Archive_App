@@ -10,11 +10,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QSplitter,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QComboBox, QSpinBox,
-    QPushButton, QPlainTextEdit, QMessageBox, QApplication,
+    QPushButton, QPlainTextEdit, QMessageBox, QApplication, QFileDialog,
 )
 
 from .bl3_advanced import list_inventory, list_visual_weapons
 from .bl3_inplace import save_advanced_with_backup
+from .bl3_reference_catalog import load_reference_catalog, normalize_item_code
 
 
 class WeaponWorkshop(QWidget):
@@ -26,6 +27,7 @@ class WeaponWorkshop(QWidget):
         self.records = []
         self.weapon_parts = {}
         self.queue = []
+        self.reference_catalog = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
@@ -62,6 +64,25 @@ class WeaponWorkshop(QWidget):
         duplicate.clicked.connect(self.duplicate_item)
         row.addWidget(duplicate)
         left.addLayout(row)
+        left.addWidget(QLabel('OPTIONAL ITEM REFERENCE CATALOG'))
+        catalog_row = QHBoxLayout()
+        self.load_catalog_button = QPushButton('Load catalog ZIP / CSV…')
+        self.load_catalog_button.clicked.connect(self.choose_reference_catalog)
+        catalog_row.addWidget(self.load_catalog_button)
+        self.catalog_status = QLabel('No catalog loaded')
+        catalog_row.addWidget(self.catalog_status, 1)
+        left.addLayout(catalog_row)
+        self.catalog_search = QLineEdit()
+        self.catalog_search.setPlaceholderText('Find a BL3 item code by item name…')
+        self.catalog_search.textChanged.connect(self.search_catalog)
+        left.addWidget(self.catalog_search)
+        self.catalog_items = QListWidget()
+        self.catalog_items.setMaximumHeight(145)
+        self.catalog_items.currentItemChanged.connect(self.select_catalog_item)
+        left.addWidget(self.catalog_items)
+        catalog_action = QPushButton('Use selected catalog item code')
+        catalog_action.clicked.connect(self.use_catalog_code)
+        left.addWidget(catalog_action)
         split.addWidget(inventory)
 
         details = QFrame()
@@ -159,14 +180,22 @@ class WeaponWorkshop(QWidget):
         self.details = dict(details)
         try:
             self.records = list_inventory(details['path'], details['platform'], 'character')
-            self.weapon_parts = {
-                entry['item_index']: entry
-                for entry in list_visual_weapons(details['path'], details['platform'])
-            }
         except (OSError, ValueError, RuntimeError) as exc:
             self.clear()
             self.summary.setText('Inventory unavailable: ' + str(exc))
             return
+        try:
+            self.weapon_parts = {
+                entry['item_index']: entry
+                for entry in list_visual_weapons(details['path'], details['platform'])
+            }
+        except (OSError, ValueError, RuntimeError, KeyError, IndexError) as exc:
+            # A changed inventory-serial schema must not hide usable
+            # character inventory and editable item-code operations.
+            self.weapon_parts = {}
+            self.asset_info.setText(
+                'Part-level preview unavailable for this save: ' + str(exc)
+            )
         self.summary.setText(f"{len(self.records)} items • {details['platform']}")
         self.refresh_actions()
         self.filter_items('')
@@ -210,9 +239,18 @@ class WeaponWorkshop(QWidget):
         if not current:
             self.parts.setPlainText('Part editing is unavailable for this item serial.')
             return
-        self.parts.setPlainText('\n'.join(
-            f"{entry['slot']}: {entry['asset']}" for entry in current['parts']
-        ))
+        lines = []
+        for entry in current['parts']:
+            lines.append(f"{entry['slot']}: {entry['asset']}")
+            if self.reference_catalog is not None:
+                info = self.reference_catalog.describe_part(entry['asset'])
+                if info is not None:
+                    detail = ' | '.join(filter(None, (
+                        info.positives, info.negatives, info.effects,
+                    )))
+                    if detail:
+                        lines.append('    ' + detail)
+        self.parts.setPlainText('\\n'.join(lines))
         for entry in self.weapon_parts.values():
             if entry['item_index'] == record['index']:
                 continue
@@ -245,6 +283,48 @@ class WeaponWorkshop(QWidget):
         self.enqueue({'op': 'weapon_anointment', 'index': index,
                       'donor_index': donor, 'asset': asset})
 
+    def choose_reference_catalog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Load optional BL3 reference data', '',
+            'BL3 catalog files (*.zip *.csv);;All files (*)'
+        )
+        if not path:
+            return
+        try:
+            catalog = load_reference_catalog(path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'Catalog import failed', str(exc))
+            return
+        self.reference_catalog = catalog
+        self.catalog_status.setText(
+            f'{len(catalog.items)} items / {len(catalog.parts)} parts'
+        )
+        self.search_catalog(self.catalog_search.text())
+        self.select_item()
+
+    def search_catalog(self, query):
+        self.catalog_items.clear()
+        if self.reference_catalog is None:
+            return
+        for item in self.reference_catalog.search_items(query):
+            widget_item = QListWidgetItem(item.name)
+            widget_item.setData(Qt.ItemDataRole.UserRole, item.code)
+            self.catalog_items.addItem(widget_item)
+
+    def select_catalog_item(self, current=None, previous=None):
+        # Selection alone does not queue or import anything into the save.
+        if current is not None:
+            self.catalog_status.setToolTip(
+                'Select Use selected catalog item code, then Import code.'
+            )
+
+    def use_catalog_code(self):
+        item = self.catalog_items.currentItem()
+        if item is None:
+            return
+        self.import_code.setText(item.data(Qt.ItemDataRole.UserRole))
+        self.import_code.setFocus()
+
     def enqueue(self, action):
         if self.details is None:
             return
@@ -256,8 +336,10 @@ class WeaponWorkshop(QWidget):
 
     def add_item(self):
         code = self.import_code.text().strip()
-        if not (code.startswith('BL3(') and code.endswith(')')):
-            QMessageBox.warning(self, 'Invalid code', 'Supply a compatible BL3(...) serial.')
+        try:
+            code = normalize_item_code(code)
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Invalid code', str(exc))
             return
         self.enqueue({'op': 'item_add', 'code': code})
 
