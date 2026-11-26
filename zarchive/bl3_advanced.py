@@ -65,7 +65,7 @@ def _action(save, kind, action):
             save.add_new_item_encoded(item.get_serial_base64())
         elif op == 'item_level':
             item = _index(save, action['index'])
-            if not item.can_parse:
+            if not getattr(item, 'can_parse', False):
                 raise ValueError('Item serial cannot be safely parsed for level editing.')
             item.level = _int(action['level'], 'Item level', 1, 100)
         elif op == 'item_mayhem':
@@ -93,7 +93,7 @@ def _action(save, kind, action):
             save.set_max_sdus()
         elif op in ('vault_keys', 'vault_chests'):
             card = _int(action['card'], 'Vault Card', 1, 3)
-            getter, setter = (KEYS if op == 'vault_keys' else CHESTS)[card]
+            _, setter = (KEYS if op == 'vault_keys' else CHESTS)[card]
             getattr(save, setter)(_int(action['value'], 'Vault Card amount'))
         elif op == 'unlock_cosmetic':
             category = action['category']
