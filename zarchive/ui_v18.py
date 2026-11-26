@@ -16,8 +16,8 @@ class EditorWorkspace(QDialog):
         outer=QVBoxLayout(self)
         self.legacy_container=QWidget(self)
         layout=QVBoxLayout(self.legacy_container)
-        outer.addWidget(QLabel('Choose a built-in game editor or use an installed definition for another archived game.'))
-        targets=QHBoxLayout();outer.addLayout(targets);targets.addWidget(QLabel('Game target:'))
+        outer.addWidget(QLabel('Select a game, then choose the console inside its game-specific editor.'))
+        targets=QHBoxLayout();outer.addLayout(targets);targets.addWidget(QLabel('Game:'))
         self.game_target=QComboBox();self.game_target.addItem('All archived games / installed definitions',None)
         # One entry per game. The built-in game editor owns platform selection.
         self.game_target.addItem('Borderlands 3 · Built-in editor', 'bl3')
