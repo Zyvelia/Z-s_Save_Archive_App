@@ -15,7 +15,7 @@ from .universal_editor_profiles import PROFILES, validate_profile
 
 
 class BL3NativeDialog(QDialog):
-    def __init__(self, working, parent=None):
+    def __init__(self, working, parent=None, default_profile='bl3-ps4-character'):
         super().__init__(parent)
         self.working = Path(working)
         self.details = None
@@ -40,9 +40,9 @@ class BL3NativeDialog(QDialog):
             self.profile.addItem(label, item.key)
             index = self.profile.count() - 1
             if not item.editable:
-                from PySide6.QtCore import Qt
                 self.profile.model().item(index).setEnabled(False)
-        self.profile.setCurrentIndex(1)  # BL3 PS4 character as current default
+        matching = next((i for i, item in enumerate(PROFILES) if item.key == default_profile), 1)
+        self.profile.setCurrentIndex(matching)
         self.profile.currentIndexChanged.connect(self.profile_changed)
         form.addRow('Game profile', self.profile)
 
