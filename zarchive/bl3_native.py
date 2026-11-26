@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
-import os
 import tempfile
 
 MAX_SAVE_BYTES = 32 * 1024 * 1024
@@ -55,7 +54,7 @@ def load_character(path):
             'platform_build': save.build_id,
             'save_type': save.sg_type,
         }
-    except (OSError, AssertionError, KeyError, IndexError, UnicodeError, ValueError) as exc:
+    except Exception as exc:
         raise ValueError(f'Could not decode Borderlands 3 character save: {exc}') from exc
     return result
 
@@ -83,7 +82,11 @@ def write_character_copy(source, destination, *, name, level, money, eridium,
         raise ValueError('The source file changed after loading. Reopen it before editing.')
 
     codec = _codec()
-    save = codec(str(source))
+    try:
+        save = codec(str(source))
+    except Exception as exc:
+        raise ValueError('The installed codec could not read this PS4 save. '
+                         'Use the external BL3 editor for this game version.') from exc
     save.set_char_name(name)
     save.set_level(level)
     save.set_money(money)
@@ -91,6 +94,7 @@ def write_character_copy(source, destination, *, name, level, money, eridium,
 
     # Stage on the destination filesystem, but do not replace any existing file.
     temporary = None
+    created = False
     try:
         with tempfile.NamedTemporaryFile(prefix='.bl3-edit-', suffix='.tmp',
                                          dir=destination.parent, delete=False) as stream:
@@ -103,17 +107,18 @@ def write_character_copy(source, destination, *, name, level, money, eridium,
         if hashlib.sha256(source.read_bytes()).hexdigest() != before:
             raise ValueError('Original changed during editing; no save was published.')
         # Exclusive destination creation prevents silently replacing another save.
-        with destination.open('xb') as stream, temporary.open('rb') as result:
-            while True:
-                block = result.read(1024 * 1024)
-                if not block:
-                    break
-                stream.write(block)
+        with destination.open('xb') as stream:
+            created = True
+            with temporary.open('rb') as result:
+                while True:
+                    block = result.read(1024 * 1024)
+                    if not block:
+                        break
+                    stream.write(block)
         return destination
     except BaseException:
-        if destination.is_file():
-            # Only remove output when this operation created it. See exclusive-create below.
-            pass
+        if created:
+            destination.unlink(missing_ok=True)
         raise
     finally:
         if temporary is not None:
