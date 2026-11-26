@@ -12,7 +12,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QVBoxLayout, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QPushButton, QFileDialog, QMessageBox, QPlainTextEdit,
-    QTabWidget, QWidget, QGroupBox, QGridLayout,
+    QTabWidget, QWidget, QGroupBox, QGridLayout, QFrame, QSplitter,
+    QListWidget, QListWidgetItem, QStackedWidget,
 )
 
 from .bl3_native import (
@@ -23,6 +24,7 @@ from .game_editor_layouts import section_enabled, layout_for
 from .ui_bl3_drop_zone import SaveDropZone
 from .bl3_inplace import save_with_backup
 from .ui_bl3_advanced import BL3AdvancedDialog
+from .ui_bl3_workshop import WeaponWorkshop
 
 
 def available_sections(game, platform, loaded_kinds):
@@ -42,8 +44,8 @@ class BL3NativeDialog(QDialog):
         self.working = Path(working).resolve()
         self.loaded = {}
         self.setWindowTitle('Universal Save Editor | Borderlands 3')
-        self.resize(940, 650)
-        self.setMinimumSize(720, 440)
+        self.resize(1250, 810)
+        self.setMinimumSize(900, 620)
         self.setStyleSheet('''
             QDialog { background: #14121c; color: #e8e4f6; }
             QLabel { color: #ddd8ef; }
@@ -64,6 +66,15 @@ class BL3NativeDialog(QDialog):
             QPushButton:hover:enabled { background: #624185; }
             QPushButton:disabled { color: #77727f; background: #26232d;
                 border-color: #393540; }
+            QFrame#bl3FileCard { background:#241d30; border:1px solid #624579;
+                border-radius:10px; }
+            QListWidget#bl3Nav { background:#1b1625; color:#e3d5f0;
+                border:1px solid #57416c; border-radius:10px;
+                font-size:13px; padding:7px; }
+            QListWidget#bl3Nav::item { padding:12px 10px; border-radius:7px; }
+            QListWidget#bl3Nav::item:selected { background:#65408c;
+                color:#ffffff; border-left:3px solid #ffd126; }
+            QListWidget#bl3Nav::item:disabled { color:#736b7f; }
             QTabWidget::pane { border: 1px solid #514364; border-radius: 8px; }
             QTabBar::tab { background: #272235; color: #ded5f0; padding: 11px 18px;
                 border: 1px solid #4b3f5e; border-radius: 6px; margin-right: 4px; }
@@ -71,94 +82,151 @@ class BL3NativeDialog(QDialog):
             QTabBar::tab:disabled { background: #25232b; color: #77737e;
                 border: 1px solid #36313d; }
         ''')
+        # Compact fixed header and save cards leave room for the actual editor.
         root = QVBoxLayout(self)
-        heading = QLabel(layout_for('Borderlands 3').title)
-        heading.setStyleSheet('font-size: 21px; font-weight: 700; color: #c8a7ff;')
-        root.addWidget(heading)
-        desc = QLabel(
-            'Select a game and console first. Import character and profile files '
-            'independently. Missing data tabs remain gray and locked. '
-            'Save replaces the selected source after creating a verified backup.'
-        )
-        desc.setWordWrap(True)
-        root.addWidget(desc)
-        picker = QHBoxLayout()
-        root.addLayout(picker)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(8)
+        header = QHBoxLayout()
+        root.addLayout(header)
+        heading = QLabel('BORDERLANDS 3  /  SAVE EDITOR')
+        heading.setStyleSheet('font-size:20px; font-weight:800; color:#f8d02a;')
+        header.addWidget(heading, 1)
+
         self.game = QComboBox()
         self.game.addItem('Select game…', None)
         for game in dict.fromkeys(p.game for p in PROFILES):
             self.game.addItem(game, game)
             if layout_for(game) is None:
-                self.game.model().item(self.game.count() - 1).setEnabled(False)
+                self.game.model().item(self.game.count()-1).setEnabled(False)
         self.game_label = QLabel('Game')
-        picker.addWidget(self.game_label)
-        picker.addWidget(self.game, 2)
+        header.addWidget(self.game_label)
+        header.addWidget(self.game)
         self.game_label.setVisible(not self.embedded)
         self.game.setVisible(not self.embedded)
+        header.addWidget(QLabel('Console'))
         self.console = QComboBox()
-        picker.addWidget(QLabel('Console'))
-        picker.addWidget(self.console, 1)
+        self.console.setMinimumWidth(135)
+        header.addWidget(self.console)
         self.game.currentIndexChanged.connect(self.game_changed)
         self.console.currentIndexChanged.connect(self.console_changed)
 
-        self.file_row = QGridLayout()
-        root.addLayout(self.file_row)
+        files = QHBoxLayout()
+        files.setSpacing(10)
+        root.addLayout(files)
         self.source_labels = {}
         self.load_buttons = {}
         self.clear_buttons = {}
         self.drop_zones = {}
-        for index, kind in enumerate(('character', 'profile')):
-            label = QLabel('CHARACTER SAVE' if kind == 'character' else 'PROFILE DATA')
-            label.setStyleSheet('color: #c9b6e6; font-weight: 600;')
-            self.file_row.addWidget(label, index * 2, 0)
+        self.file_cards = {}
+        for kind, label in (('character', 'CHARACTER SAVE'), ('profile', 'PROFILE DATA')):
+            card = QFrame(self)
+            card.setObjectName('bl3FileCard')
+            self.file_cards[kind] = card
+            file_layout = QVBoxLayout(card)
+            file_layout.setContentsMargins(10, 8, 10, 8)
+            file_layout.setSpacing(5)
+            top = QHBoxLayout()
+            top.addWidget(QLabel(label))
             field = QLineEdit()
             field.setReadOnly(True)
-            field.setPlaceholderText('Not loaded — this section is locked')
+            field.setPlaceholderText('Not loaded')
             self.source_labels[kind] = field
-            self.file_row.addWidget(field, index * 2, 1)
-            drop = SaveDropZone(kind)
-            drop.fileDropped.connect(lambda path, k=kind: self.import_dropped(path, k))
-            self.drop_zones[kind] = drop
-            self.file_row.addWidget(drop, index * 2 + 1, 0, 1, 4)
-            load = QPushButton('Load ' + ('save…' if kind == 'character' else 'profile…'))
+            top.addWidget(field, 1)
+            load = QPushButton('Load…')
             load.clicked.connect(lambda checked=False, k=kind: self.choose_file(k))
             self.load_buttons[kind] = load
-            self.file_row.addWidget(load, index * 2, 2)
+            top.addWidget(load)
             clear = QPushButton('Unload')
             clear.clicked.connect(lambda checked=False, k=kind: self.unload(k))
             self.clear_buttons[kind] = clear
-            self.file_row.addWidget(clear, index * 2, 3)
+            top.addWidget(clear)
+            file_layout.addLayout(top)
+            drop = SaveDropZone(kind)
+            drop.setMinimumHeight(36)
+            drop.setMaximumHeight(42)
+            drop.setText('Drop ' + kind + ' save here')
+            drop.fileDropped.connect(lambda path, k=kind: self.import_dropped(path, k))
+            self.drop_zones[kind] = drop
+            file_layout.addWidget(drop)
+            files.addWidget(card, 1)
 
+        self.workspace_split = QSplitter(Qt.Orientation.Horizontal)
+        self.workspace_split.setChildrenCollapsible(False)
+        root.addWidget(self.workspace_split, 1)
+        self.navigation = QListWidget(self)
+        self.navigation.setObjectName('bl3Nav')
+        self.navigation.setMinimumWidth(175)
+        self.navigation.setMaximumWidth(235)
+        self.workspace_split.addWidget(self.navigation)
+        content = QWidget(self)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(4)
         self.tabs = QTabWidget()
-        root.addWidget(self.tabs, 1)
+        self.tabs.tabBar().hide()
+        content_layout.addWidget(self.tabs, 1)
         self.empty_hint = QLabel(
-            'Select PC or PS4, then load or drop your character save and/or profile. '
-            'Editing tabs unlock only after a matching file is successfully decoded.'
+            'Select PC or PS4, then drag in a character save and/or profile file. '
+            'The corresponding editing pages unlock after successful validation.'
         )
         self.empty_hint.setWordWrap(True)
         self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_hint.setStyleSheet(
             'background:#211b2c; border:1px dashed #53456b; '
-            'border-radius:8px; color:#bcb1d0; padding:36px;'
+            'border-radius:9px; color:#c0b6d1; padding:28px;'
         )
-        root.addWidget(self.empty_hint, 1)
+        content_layout.addWidget(self.empty_hint, 1)
+        self.workspace_split.addWidget(content)
+        self.workspace_split.setStretchFactor(1, 1)
+        self.workspace_split.setSizes([210, 880])
+
         self.character_tab = QWidget()
         self.profile_tab = QWidget()
-        self.character_tab_index = self.tabs.addTab(self.character_tab, 'Character Save')
-        self.profile_tab_index = self.tabs.addTab(self.profile_tab, 'Profile Data')
+        self.character_tab_index = self.tabs.addTab(self.character_tab, 'Character Overview')
+        self.profile_tab_index = self.tabs.addTab(self.profile_tab, 'Profile Overview')
         self._create_character_design()
         self._create_profile_design()
         self._create_extra_tabs()
+        self.workshop = WeaponWorkshop(self.tabs)
+        self.workshop_index = self.tabs.addTab(self.workshop, 'Weapon Workshop')
+        self.workshop.saveCompleted.connect(
+            lambda output: self.open_save(Path(output), 'character')
+        )
+        self.page_kinds = {
+            self.character_tab_index: 'character',
+            self.profile_tab_index: 'profile',
+            self.workshop_index: 'character',
+        }
+        for index, kind, view in self.extra_tabs.values():
+            self.page_kinds[index] = kind
+        self.navigation.addItem('CHARACTER')
+        for index in (self.character_tab_index,
+                      next(x[0] for name,x in self.extra_tabs.items() if name=='Inventory & Weapons'),
+                      self.workshop_index,
+                      next(x[0] for name,x in self.extra_tabs.items() if name=='Skills & Progression')):
+            item = QListWidgetItem(self.tabs.tabText(index))
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            self.navigation.addItem(item)
+        self.navigation.addItem('PROFILE')
+        for index in (self.profile_tab_index,
+                      next(x[0] for name,x in self.extra_tabs.items() if name=='Guardian & Vault'),
+                      next(x[0] for name,x in self.extra_tabs.items() if name=='Cosmetics & Bank')):
+            item = QListWidgetItem(self.tabs.tabText(index))
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            self.navigation.addItem(item)
+        self.navigation.currentItemChanged.connect(self._navigate)
 
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
-        self.status.setMaximumHeight(85)
+        self.status.setMaximumHeight(44)
         root.addWidget(self.status)
         actions = QHBoxLayout()
-        self.export_character_button = QPushButton('Save character + backup')
-        self.export_character_button.clicked.connect(lambda: self.write_copy('character'))
+        self.pending_label = QLabel('Loaded saves: 0')
+        actions.addWidget(self.pending_label, 1)
+        self.export_character_button = QPushButton('Save Character + Backup')
+        self.export_character_button.clicked.connect(self.save_character_page)
         actions.addWidget(self.export_character_button)
-        self.export_profile_button = QPushButton('Save profile + backup')
+        self.export_profile_button = QPushButton('Save Profile + Backup')
         self.export_profile_button.clicked.connect(lambda: self.write_copy('profile'))
         actions.addWidget(self.export_profile_button)
         if not self.embedded:
@@ -167,6 +235,19 @@ class BL3NativeDialog(QDialog):
             actions.addWidget(close)
         root.addLayout(actions)
         self.game_changed()
+
+    def _navigate(self, current, previous=None):
+        if current is None:
+            return
+        index = current.data(Qt.ItemDataRole.UserRole)
+        if type(index) is int and self.tabs.isTabEnabled(index):
+            self.tabs.setCurrentIndex(index)
+
+    def save_character_page(self):
+        if self.tabs.currentIndex() == self.workshop_index and self.workshop.queue:
+            self.workshop.save_pending()
+        else:
+            self.write_copy('character')
 
     def set_target(self, game, platform=None):
         """Select the game without locking the console dropdown.
