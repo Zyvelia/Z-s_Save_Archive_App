@@ -32,19 +32,25 @@ class BL3NativeDialog(QDialog):
         form = QFormLayout()
         layout.addLayout(form)
 
-        self.profile = QComboBox()
-        for item in PROFILES:
-            label = f'{item.game} / {item.platform} / {item.file_type}'
-            if not item.editable:
-                label += f' [{item.status}]'
-            self.profile.addItem(label, item.key)
-            index = self.profile.count() - 1
-            if not item.editable:
-                self.profile.model().item(index).setEnabled(False)
-        matching = next((i for i, item in enumerate(PROFILES) if item.key == default_profile), 1)
-        self.profile.setCurrentIndex(matching)
-        self.profile.currentIndexChanged.connect(self.profile_changed)
-        form.addRow('Game profile', self.profile)
+        # Require an explicit game -> console -> save-type selection every time.
+        # Context from the archive is shown as a suggestion, never auto-applied.
+        self.suggested_profile = default_profile
+        self.game = QComboBox()
+        self.game.addItem('Select game…', None)
+        for game in dict.fromkeys(item.game for item in PROFILES):
+            self.game.addItem(game, game)
+        form.addRow('Game', self.game)
+
+        self.console = QComboBox()
+        form.addRow('Console / platform', self.console)
+        self.save_type = QComboBox()
+        form.addRow('Save type', self.save_type)
+        self.selection_hint = QLabel('Choose the game, console and save type before opening a file.')
+        self.selection_hint.setWordWrap(True)
+        form.addRow('Profile status', self.selection_hint)
+        self.game.currentIndexChanged.connect(self.game_changed)
+        self.console.currentIndexChanged.connect(self.console_changed)
+        self.save_type.currentIndexChanged.connect(self.profile_changed)
 
         self.source = QLineEdit()
         self.source.setReadOnly(True)
@@ -52,6 +58,8 @@ class BL3NativeDialog(QDialog):
         row.addWidget(self.source, 1)
         browse = QPushButton('Choose save')
         browse.clicked.connect(self.choose_save)
+        self.browse = browse
+        self.browse.setEnabled(False)
         row.addWidget(browse)
         form.addRow('Save file', row)
 
@@ -95,29 +103,57 @@ class BL3NativeDialog(QDialog):
         close.clicked.connect(self.reject)
         actions.addWidget(close)
         layout.addLayout(actions)
-        self.profile_changed()
-        candidates = [p for p in self.working.iterdir() if p.is_file() and
-                      (p.name.lower().endswith('.sav') or p.name.isdigit() or
-                       p.name.casefold() == 'profile')]
-        if len(candidates) == 1:
-            if candidates[0].name.casefold() == 'profile':
-                self.profile.setCurrentIndex(3)  # PS4 profile
-            self.open_save(candidates[0])
+        self.game_changed()
 
     def active_profile(self):
-        return validate_profile(self.profile.currentData())
+        from .universal_editor_profiles import profile_for
+        value = self.save_type.currentData()
+        return validate_profile(value) if value else None
+
+    def game_changed(self, *_):
+        self.console.blockSignals(True)
+        self.console.clear()
+        self.console.addItem('Select console…', None)
+        game = self.game.currentData()
+        for platform in dict.fromkeys(p.platform for p in PROFILES if p.game == game):
+            self.console.addItem(platform, platform)
+        self.console.blockSignals(False)
+        self.console_changed()
+
+    def console_changed(self, *_):
+        self.save_type.blockSignals(True)
+        self.save_type.clear()
+        self.save_type.addItem('Select save type…', None)
+        game, platform = self.game.currentData(), self.console.currentData()
+        for profile in PROFILES:
+            if profile.game != game or profile.platform != platform:
+                continue
+            label = profile.file_type if profile.editable else (
+                profile.file_type + ' (' + profile.status + ')')
+            self.save_type.addItem(label, profile.key)
+            if not profile.editable:
+                self.save_type.model().item(self.save_type.count() - 1).setEnabled(False)
+        self.save_type.blockSignals(False)
+        self.profile_changed()
 
     def profile_changed(self, *_):
         self.details = None
         self.export.setEnabled(False)
         self.source.clear()
-        kind = self.active_profile().file_type.casefold()
+        selected = self.active_profile()
+        kind = selected.file_type.casefold() if selected else None
         for widget, label in self.fields:
             show = (kind == 'character') if widget in (
                 self.character, self.level, self.money, self.eridium) else (kind == 'profile')
             widget.setVisible(show)
             label.setVisible(show)
-        self.report.setPlainText('Select a matching save from the protected working copy.')
+        self.browse.setEnabled(selected is not None)
+        if selected:
+            self.selection_hint.setText(f'{selected.game} · {selected.platform} · {selected.file_type} — supported')
+            self.report.setPlainText('Profile selected. Now choose a matching save from the protected working copy.')
+        else:
+            self.selection_hint.setText('Select a supported game, console and save type.')
+            self.report.setPlainText('Select your game, console and save type first. Nothing has been loaded.')
 
     def choose_save(self):
         name, _ = QFileDialog.getOpenFileName(
@@ -132,6 +168,8 @@ class BL3NativeDialog(QDialog):
             if not path.resolve().is_relative_to(self.working.resolve()):
                 raise ValueError('Choose a file inside the protected working copy.')
             profile = self.active_profile()
+            if profile is None:
+                raise ValueError('Select a game, console and save type before opening a file.')
             if profile.file_type == 'Character':
                 details = load_character(path, profile.platform)
             else:
