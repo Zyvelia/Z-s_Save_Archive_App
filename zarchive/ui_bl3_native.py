@@ -19,6 +19,8 @@ from .bl3_native import (
 )
 from .universal_editor_profiles import PROFILES, validate_profile
 from .game_editor_layouts import section_enabled, layout_for
+from .ui_bl3_drop_zone import SaveDropZone
+from .bl3_drop_import import stage_dropped_save
 
 
 def available_sections(game, platform, loaded_kinds):
@@ -95,23 +97,28 @@ class BL3NativeDialog(QDialog):
         self.source_labels = {}
         self.load_buttons = {}
         self.clear_buttons = {}
+        self.drop_zones = {}
         for index, kind in enumerate(('character', 'profile')):
             label = QLabel('CHARACTER SAVE' if kind == 'character' else 'PROFILE DATA')
             label.setStyleSheet('color: #c9b6e6; font-weight: 600;')
-            self.file_row.addWidget(label, index, 0)
+            self.file_row.addWidget(label, index * 2, 0)
             field = QLineEdit()
             field.setReadOnly(True)
             field.setPlaceholderText('Not loaded — this section is locked')
             self.source_labels[kind] = field
-            self.file_row.addWidget(field, index, 1)
+            self.file_row.addWidget(field, index * 2, 1)
+            drop = SaveDropZone(kind)
+            drop.fileDropped.connect(lambda path, k=kind: self.import_dropped(path, k))
+            self.drop_zones[kind] = drop
+            self.file_row.addWidget(drop, index * 2 + 1, 0, 1, 4)
             load = QPushButton('Load ' + ('save…' if kind == 'character' else 'profile…'))
             load.clicked.connect(lambda checked=False, k=kind: self.choose_file(k))
             self.load_buttons[kind] = load
-            self.file_row.addWidget(load, index, 2)
+            self.file_row.addWidget(load, index * 2, 2)
             clear = QPushButton('Unload')
             clear.clicked.connect(lambda checked=False, k=kind: self.unload(k))
             self.clear_buttons[kind] = clear
-            self.file_row.addWidget(clear, index, 3)
+            self.file_row.addWidget(clear, index * 2, 3)
 
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
@@ -234,8 +241,9 @@ class BL3NativeDialog(QDialog):
             else:
                 self.source_labels[kind].setText(loaded['path'])
             self.clear_buttons[kind].setEnabled(loaded is not None)
-            self.load_buttons[kind].setEnabled(
-                self._selected_profile(kind) is not None)
+            supported = self._selected_profile(kind) is not None
+            self.load_buttons[kind].setEnabled(supported)
+            self.drop_zones[kind].setEnabled(supported)
         self.export_character_button.setEnabled(states['character'])
         self.export_profile_button.setEnabled(states['profile'])
         for kind, widgets in (
@@ -259,6 +267,20 @@ class BL3NativeDialog(QDialog):
         self.profile_info.setText(
             'Profile data loaded — editing enabled.' if states['profile']
             else 'Profile file missing: tab locked.')
+
+    def import_dropped(self, path, kind):
+        """Safely stage a dropped file; never edit a user's external original."""
+        selected = self._selected_profile(kind)
+        if selected is None:
+            self.status.setPlainText('Choose a supported game and console before dropping files.')
+            return
+        try:
+            destination = stage_dropped_save(
+                path, self.working, platform=selected.platform, kind=kind)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.status.setPlainText(f'Drop rejected ({kind}): {exc}')
+            return
+        self.open_save(destination, kind)
 
     def choose_file(self, kind):
         try:
