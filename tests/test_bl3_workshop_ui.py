@@ -59,6 +59,47 @@ class WorkshopWidgetTests(unittest.TestCase):
         self.assertEqual(widget.queue, [])
         self.assertFalse(widget.search.isEnabled())
 
+    def test_all_item_selector_filters_unsupported_and_experiment_donors(self):
+        from zarchive.ui_bl3_workshop import WeaponWorkshop
+        details = {'path': 'fake.sav', 'platform': 'PS4', 'sha256': 'digest'}
+        inventory = [
+            {'index': 0, 'name': 'Gun A', 'level': 72, 'mayhem': 10,
+             'balance': 'GunBalanceA', 'code': 'BL3(BAAA==)'},
+            {'index': 1, 'name': 'Gun B', 'level': 72, 'mayhem': 10,
+             'balance': 'GunBalanceB', 'code': 'BL3(BAAB==)'},
+            {'index': 2, 'name': 'Eridium', 'level': 1, 'mayhem': 0,
+             'balance': 'EridiumBalance', 'code': 'BL3(BAAC==)'},
+        ]
+        weapon_parts = [
+            {'item_index': 0, 'balance': 'GunBalanceA', 'category': 'shotgun',
+             'parts': [{'slot': 0, 'asset': 'PartA'}], 'anointments': []},
+            {'item_index': 1, 'balance': 'GunBalanceB', 'category': 'shotgun',
+             'parts': [{'slot': 0, 'asset': 'PartB'}], 'anointments': []},
+        ]
+        with (patch('zarchive.ui_bl3_workshop.list_inventory', return_value=inventory),
+              patch('zarchive.ui_bl3_workshop.list_visual_weapons', return_value=weapon_parts)):
+            widget = WeaponWorkshop()
+            widget.load_character(details)
+        self.addCleanup(widget.close)
+        self.assertEqual(widget.item_selector.count(), 3)
+        widget.item_selector.setCurrentIndex(2)
+        self.assertEqual(widget.selected_index(), 2)
+        self.assertFalse(widget.swap_button.isEnabled())
+        widget.item_scope.setCurrentIndex(1)
+        self.assertEqual(widget.item_selector.count(), 2)
+        widget.item_scope.setCurrentIndex(2)
+        self.assertEqual(widget.item_selector.count(), 1)
+        widget.item_scope.setCurrentIndex(0)
+        widget.item_selector.setCurrentIndex(0)
+        self.assertEqual(widget.donor.count(), 0)
+        widget.experimental.setChecked(True)
+        self.assertEqual(widget.donor.count(), 1)
+        self.assertTrue(widget.swap_button.isEnabled())
+        widget.queue_part()
+        self.assertEqual(widget.queue[0]['op'], 'weapon_part_experiment')
+        self.assertIn('EXPORT COPY ONLY', widget.queue_info.text())
+
+
 
 if __name__ == '__main__':
     unittest.main()
