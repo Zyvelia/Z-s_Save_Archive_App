@@ -159,6 +159,17 @@ class BL3AdvancedDialog(QDialog):
                          'code': code})
         button('Import BL3 code', add_code)
         if kind == 'character':
+            def replace_code():
+                idx = selected()
+                code = self.item_code.toPlainText().strip()
+                if idx is None:
+                    QMessageBox.warning(self, 'Select an item', 'Choose an inventory entry to replace.')
+                    return
+                if not code.startswith('BL3(') or not code.endswith(')'):
+                    QMessageBox.warning(self, 'Invalid item code', 'Paste a BL3(...) serial first.')
+                    return
+                self._queue({'op': 'item_replace', 'index': idx, 'code': code})
+            button('Replace selected with BL3 code', replace_code)
             button('Duplicate selected', duplicate)
             button('Set item level', change_level)
             button('Set item Mayhem', change_mayhem)
