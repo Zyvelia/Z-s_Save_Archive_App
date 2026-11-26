@@ -26,7 +26,7 @@ PROFILES = (
     GameEditorProfile('bl3-pc-profile', 'Borderlands 3', 'PC', 'Profile', 'bl3', 'supported'),
     GameEditorProfile('bl3-ps4-profile', 'Borderlands 3', 'PS4', 'Profile', 'bl3', 'supported'),
     GameEditorProfile('bl3-xbox-character', 'Borderlands 3', 'Xbox', 'Character', None, 'planned'),
-    GameEditorProfile('bl3-ps3-character', 'Borderlands 3', 'PS3', 'Character', None, 'unsupported'),
+    GameEditorProfile('bl2-ps3-character', 'Borderlands 2', 'PS3', 'Character', None, 'planned'),
 )
 
 
