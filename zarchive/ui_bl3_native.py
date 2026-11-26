@@ -25,6 +25,7 @@ from .ui_bl3_drop_zone import SaveDropZone
 from .bl3_inplace import save_with_backup
 from .ui_bl3_advanced import BL3AdvancedDialog
 from .ui_bl3_workshop import WeaponWorkshop
+from .ui_bl3_missions import BL3MissionExplorer
 
 
 def available_sections(game, platform, loaded_kinds):
@@ -444,6 +445,10 @@ class BL3NativeDialog(QDialog):
             edit = QPushButton('Open advanced ' + title + ' editor…')
             edit.clicked.connect(lambda checked=False, k=kind: self.open_advanced(k))
             layout.addWidget(group)
+            if title == 'Skills & Progression':
+                mission_button = QPushButton('Browse BL3 missions from extracted ZIP…')
+                mission_button.clicked.connect(self.open_mission_explorer)
+                layout.addWidget(mission_button)
             layout.addWidget(edit)
             layout.addStretch()
             index = self.tabs.addTab(page, title)
@@ -478,6 +483,11 @@ class BL3NativeDialog(QDialog):
                 f'{key}: {value if value is not None else "Unavailable"}'
                 for key, value in fields.items()
             ))
+
+    def open_mission_explorer(self):
+        """Read-only mission browser; available without changing save state."""
+        dialog = BL3MissionExplorer(self.loaded.get('character'), self)
+        dialog.exec()
 
     def open_advanced(self, kind):
         """Open a game-specific module without unlocking unrelated save tabs."""
