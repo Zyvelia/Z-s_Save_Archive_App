@@ -629,8 +629,17 @@ class BL3NativeDialog(QDialog):
                        else load_profile(resolved, profile.platform))
             if details['kind'] != kind or details['platform'] != profile.platform:
                 raise ValueError('Save kind or platform does not match the selected profile.')
-        except (OSError, ValueError, RuntimeError) as exc:
-            self.status.setPlainText('Cannot load ' + kind + ': ' + str(exc))
+        except (OSError, ValueError, RuntimeError, ImportError, AssertionError, KeyError,
+                AttributeError, IndexError, TypeError) as exc:
+            message = f'Cannot load {kind} file: {exc}'
+            self.status.setPlainText(message)
+            QMessageBox.warning(
+                self, 'Borderlands 3 save could not be loaded',
+                message + '\\n\\n'
+                'Select the matching console (PC or PS4). The selected source '
+                'file has not been modified. If the format was accepted but the '
+                'decoder failed, check the error details before trying again.'
+            )
             return False
 
         self.loaded[kind] = details
