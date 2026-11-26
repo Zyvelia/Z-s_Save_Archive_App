@@ -16,7 +16,6 @@ class EditorWorkspace(QDialog):
         outer=QVBoxLayout(self)
         self.legacy_container=QWidget(self)
         layout=QVBoxLayout(self.legacy_container)
-        outer.addWidget(self.legacy_container,1)
         outer.addWidget(QLabel('Choose a built-in game editor or use an installed definition for another archived game.'))
         targets=QHBoxLayout();outer.addLayout(targets);targets.addWidget(QLabel('Game target:'))
         self.game_target=QComboBox();self.game_target.addItem('All archived games / installed definitions',None)
@@ -44,6 +43,7 @@ class EditorWorkspace(QDialog):
         footer.addStretch();close=QPushButton('Close');close.clicked.connect(self.reject);footer.addWidget(close)
         self.game_target.currentIndexChanged.connect(self.refresh_saves);self.query.textChanged.connect(self.refresh_saves);self.saves.currentRowChanged.connect(self.refresh_editors)
         self.import_btn.clicked.connect(self.import_editor);self.inspect.clicked.connect(self.inspect_fields);self.export.clicked.connect(self.export_copy)
+        outer.addWidget(self.legacy_container,1)
         # Functional built-in game editors share this same workspace.
         # The legacy declarative editor remains available for other games.
         self.native = BL3NativeDialog(self.archive.root, self, embedded=True)
