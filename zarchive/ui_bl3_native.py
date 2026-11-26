@@ -75,6 +75,12 @@ class BL3NativeDialog(QDialog):
             QListWidget#bl3Nav::item:selected { background:#65408c;
                 color:#ffffff; border-left:3px solid #ffd126; }
             QListWidget#bl3Nav::item:disabled { color:#736b7f; }
+            QPushButton#bl3SaveMain { background:#ffd229; color:#19101c;
+                border:1px solid #ffe47a; border-radius:10px;
+                font-weight:850; padding:13px 22px; font-size:15px; }
+            QPushButton#bl3SaveMain:hover:enabled { background:#ffe475; }
+            QPushButton#bl3SaveMain:disabled { background:#49404a; color:#8e8790;
+                border-color:#5b5260; }
             QTabWidget::pane { border: 1px solid #514364; border-radius: 8px; }
             QTabBar::tab { background: #272235; color: #ded5f0; padding: 11px 18px;
                 border: 1px solid #4b3f5e; border-radius: 6px; margin-right: 4px; }
@@ -223,7 +229,8 @@ class BL3NativeDialog(QDialog):
         actions = QHBoxLayout()
         self.pending_label = QLabel('Loaded saves: 0')
         actions.addWidget(self.pending_label, 1)
-        self.export_character_button = QPushButton('Save Character + Backup')
+        self.export_character_button = QPushButton('Save + Backup')
+        self.export_character_button.setObjectName('bl3SaveMain')
         self.export_character_button.clicked.connect(self.save_character_page)
         actions.addWidget(self.export_character_button)
         self.export_profile_button = QPushButton('Save Profile + Backup')
@@ -516,6 +523,7 @@ class BL3NativeDialog(QDialog):
             f"Loaded saves: {len(self.loaded)}  •  "
             f"Queued weapon edits: {len(self.workshop.queue)}"
         )
+        self.export_profile_button.setVisible(states['profile'])
         for kind, index in (('character', self.character_tab_index),
                             ('profile', self.profile_tab_index)):
             loaded = self.loaded.get(kind)
@@ -524,6 +532,7 @@ class BL3NativeDialog(QDialog):
             else:
                 self.source_labels[kind].setText(loaded['path'])
             self.clear_buttons[kind].setEnabled(loaded is not None)
+            self.file_cards[kind].setProperty('loaded', loaded is not None)
             supported = self._selected_profile(kind) is not None
             self.load_buttons[kind].setEnabled(supported)
             self.drop_zones[kind].setEnabled(supported)
