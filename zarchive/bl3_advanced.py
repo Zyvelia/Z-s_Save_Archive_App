@@ -58,6 +58,10 @@ def _action(save, kind, action):
             if len(save.get_items()) >= MAX_ITEMS:
                 raise ValueError('Maximum inventory size reached.')
             save.add_new_item_encoded(_code(action['code']))
+        elif op == 'item_replace':
+            from bl3save.datalib import BL3Serial
+            item = _index(save, action['index'])
+            item.set_serial(BL3Serial.decode_serial_base64(_code(action['code'])))
         elif op == 'item_duplicate':
             item = _index(save, action['index'])
             if len(save.get_items()) >= MAX_ITEMS:
@@ -65,7 +69,7 @@ def _action(save, kind, action):
             save.add_new_item_encoded(item.get_serial_base64())
         elif op == 'item_level':
             item = _index(save, action['index'])
-            if not getattr(item, 'can_parse', False):
+            if item.level is None or not getattr(item, 'can_parse', False):
                 raise ValueError('Item serial cannot be safely parsed for level editing.')
             item.level = _int(action['level'], 'Item level', 1, 100)
         elif op == 'item_mayhem':
