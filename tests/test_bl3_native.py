@@ -72,6 +72,28 @@ class FakeSave:
 
 
 class NativeBL3Tests(unittest.TestCase):
+    def test_all_platform_cipher_keys_are_exactly_32_bytes(self):
+        self.assertEqual(len(KEYS), 4)
+        for key, pair in KEYS.items():
+            with self.subTest(key=key):
+                self.assertEqual(len(pair[0]), 32)
+                self.assertEqual(len(pair[1]), 32)
+        self.assertEqual(
+            KEYS[('PC', 'character')][1].hex(),
+            '7c076983317e0c825f2e367f76b4a271382b6e87390502c6cdd8b1cca133f9b6',
+        )
+
+    def test_realistic_ps4_to_pc_character_payload_conversion(self):
+        # Payload longer than 32 bytes catches truncated XOR constants.
+        plain = bytes(range(256)) * 3
+        encrypted_ps4 = transform_payload(plain, 'PS4', 'character', decrypt=False)
+        decoded = transform_payload(encrypted_ps4, 'PS4', 'character', decrypt=True)
+        self.assertEqual(decoded, plain)
+        pc_encoded = transform_payload(decoded, 'PC', 'character', decrypt=False)
+        self.assertEqual(
+            transform_payload(pc_encoded, 'PC', 'character', decrypt=True), plain
+        )
+
     def test_profiles_are_explicit_and_future_console_is_disabled(self):
         self.assertEqual(len(available_profiles()), 4)
         with self.assertRaisesRegex(ValueError, 'not supported'):
