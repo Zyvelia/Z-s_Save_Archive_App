@@ -212,13 +212,13 @@ class BL3NativeDialog(QDialog):
         self.extra_tabs = {}
         specs = (
             ('Inventory & Weapons', 'character', 'INVENTORY / WEAPONS',
-             'Weapon part, serial and anointment edits remain unavailable until verified.'),
+             'Open Advanced to search, duplicate, import/replace BL3 codes, and edit item level or Mayhem. Direct part editing is not available.'),
             ('Skills & Progression', 'character', 'SKILLS / MISSIONS / MAYHEM / SDUs',
-             'Read-only progression indicators; editing these fields is not yet validated.'),
+             'View progress below, or open Advanced for Mayhem, known SDUs and skill-tree unlock. Individual skill points remain read-only.'),
             ('Guardian & Vault', 'profile', 'GUARDIAN / VAULT CARDS',
-             'Guardian tokens and Vault Card keys are view-only.'),
+             'View totals below, or open Advanced for Guardian tokens, Vault Card keys and unopened chests.'),
             ('Cosmetics & Bank', 'profile', 'COSMETICS / SHARED BANK',
-             'Unlocked cosmetics and bank totals are view-only.'),
+             'View totals below, or open Advanced to unlock supported cosmetic groups and import compatible bank items.'),
         )
         for title, kind, header, note in specs:
             page = QWidget()
