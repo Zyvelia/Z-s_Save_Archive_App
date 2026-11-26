@@ -180,14 +180,22 @@ class WeaponWorkshop(QWidget):
         self.details = dict(details)
         try:
             self.records = list_inventory(details['path'], details['platform'], 'character')
-            self.weapon_parts = {
-                entry['item_index']: entry
-                for entry in list_visual_weapons(details['path'], details['platform'])
-            }
         except (OSError, ValueError, RuntimeError) as exc:
             self.clear()
             self.summary.setText('Inventory unavailable: ' + str(exc))
             return
+        try:
+            self.weapon_parts = {
+                entry['item_index']: entry
+                for entry in list_visual_weapons(details['path'], details['platform'])
+            }
+        except (OSError, ValueError, RuntimeError, KeyError, IndexError) as exc:
+            # A changed inventory-serial schema must not hide usable
+            # character inventory and editable item-code operations.
+            self.weapon_parts = {}
+            self.asset_info.setText(
+                'Part-level preview unavailable for this save: ' + str(exc)
+            )
         self.summary.setText(f"{len(self.records)} items • {details['platform']}")
         self.refresh_actions()
         self.filter_items('')
