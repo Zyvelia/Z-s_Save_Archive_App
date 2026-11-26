@@ -86,8 +86,8 @@ class BorderlandsWorkspace(QDialog):
         self.prepare_button.clicked.connect(self.prepare)
         self.launch_button = QPushButton('Open editor')
         self.launch_button.clicked.connect(self.launch)
-        self.native_button = QPushButton('BL3 Character Editor…')
-        self.native_button.setToolTip('Optional in-app name, level, money and Eridium editor. Writes a verified copy.')
+        self.native_button = QPushButton('Universal Save Editor…')
+        self.native_button.setToolTip('Profile-based BL3 PC and PS4 character/profile editor. Writes a verified copy.')
         self.native_button.clicked.connect(self.open_native)
         self.open_folder = QPushButton('Open copy folder')
         self.open_folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.working))))
@@ -149,7 +149,7 @@ class BorderlandsWorkspace(QDialog):
         self.prepare_button.setEnabled(idle and bool(self.source.text().strip() or self.archived.currentData()))
         self.launch_button.setEnabled(idle and self.working is not None)
         self.native_button.setEnabled(idle and self.working is not None and
-                                      self.game.currentData().key == 'bl3_ps4')
+                                      self.game.currentData().key in ('bl3_ps4', 'bl3_pc'))
         self.copy_path.setEnabled(self.working is not None)
         self.open_folder.setEnabled(self.working is not None)
         self.import_button.setEnabled(idle and self.working is not None)
@@ -228,9 +228,11 @@ class BorderlandsWorkspace(QDialog):
             self.update_actions()
 
     def open_native(self):
-        if self.working is None or self.game.currentData().key != 'bl3_ps4':
+        if self.working is None or self.game.currentData().key not in ('bl3_ps4', 'bl3_pc'):
             return
-        BL3NativeDialog(self.working, self).exec()
+        profile = ('bl3-ps4-character' if self.game.currentData().key == 'bl3_ps4'
+                   else 'bl3-pc-character')
+        BL3NativeDialog(self.working, self, default_profile=profile).exec()
 
     def check_editor(self):
         code = self.process.poll()
