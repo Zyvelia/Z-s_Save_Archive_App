@@ -302,6 +302,8 @@ class WeaponWorkshop(QWidget):
         self.anointment.clear()
         if record is None:
             self.item_name.setText('Select an inventory item')
+            self.compatibility_status.setText('No item selected.')
+            self.swap_button.setEnabled(False)
             return
         self.item_name.setText(str(record['name']))
         self.level.setValue(record['level'] if isinstance(record['level'], int) else 1)
@@ -435,7 +437,14 @@ class WeaponWorkshop(QWidget):
             QMessageBox.warning(self, 'Queue full', 'Maximum 40 actions per save.')
             return
         self.queue.append(action)
-        self.queue_info.setText(f'{len(self.queue)} pending changes')
+        experimental = any(
+            operation['op'] == 'weapon_part_experiment'
+            for operation in self.queue
+        )
+        self.queue_info.setText(
+            f'{len(self.queue)} pending changes'
+            + (' • EXPERIMENT / EXPORT COPY ONLY' if experimental else '')
+        )
 
     def add_item(self):
         code = self.import_code.text().strip()
