@@ -22,6 +22,7 @@ from .universal_editor_profiles import PROFILES, validate_profile
 from .game_editor_layouts import section_enabled, layout_for
 from .ui_bl3_drop_zone import SaveDropZone
 from .bl3_inplace import save_with_backup
+from .ui_bl3_advanced import BL3AdvancedDialog
 
 
 def available_sections(game, platform, loaded_kinds):
@@ -229,7 +230,10 @@ class BL3NativeDialog(QDialog):
             view.setReadOnly(True)
             view.setPlainText('Load the matching save file to view decoded data.')
             content.addWidget(view)
+            edit = QPushButton('Open advanced ' + title + ' editor…')
+            edit.clicked.connect(lambda checked=False, k=kind: self.open_advanced(k))
             layout.addWidget(group)
+            layout.addWidget(edit)
             layout.addStretch()
             index = self.tabs.addTab(page, title)
             self.extra_tabs[title] = (index, kind, view)
@@ -263,6 +267,17 @@ class BL3NativeDialog(QDialog):
                 f'{key}: {value if value is not None else "Unavailable"}'
                 for key, value in fields.items()
             ))
+
+    def open_advanced(self, kind):
+        """Open a game-specific module without unlocking unrelated save tabs."""
+        details = self.loaded.get(kind)
+        if details is None or not available_sections(
+                self.game.currentData(), self.console.currentData(), self.loaded)[kind]:
+            self.status.setPlainText('Load the corresponding game data file first.')
+            return
+        dialog = BL3AdvancedDialog(details, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.open_save(Path(details['path']), kind)
 
     def _selected_profile(self, kind):
         game, platform = self.game.currentData(), self.console.currentData()
