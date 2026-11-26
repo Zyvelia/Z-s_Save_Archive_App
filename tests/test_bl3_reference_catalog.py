@@ -49,6 +49,19 @@ class CatalogTests(unittest.TestCase):
             self.assertIsNotNone(info)
             self.assertEqual(info.positives, 'Damage +100%')
 
+    def test_same_named_item_variants_are_preserved(self):
+        with TemporaryDirectory() as scratch:
+            source = Path(scratch) / 'items.csv'
+            source.write_text(
+                'Name,Code,Link\\n'
+                'Hellwalker,bl3(BAAA==),https://www.lootlemon.com/weapon/hellwalker-bl3\\n'
+                'Hellwalker,BL3(BBBB==),https://www.lootlemon.com/weapon/hellwalker-bl3\\n',
+                encoding='utf-8',
+            )
+            catalog = load_reference_catalog(source)
+            self.assertEqual(len(catalog.items), 2)
+            self.assertNotEqual(catalog.items[0].code, catalog.items[1].code)
+
     def test_unknown_csv_and_zip_without_catalog_fail_cleanly(self):
         with TemporaryDirectory() as scratch:
             filename = Path(scratch) / 'missing.csv'
