@@ -121,14 +121,14 @@ def load_reference_catalog(path: str | Path) -> ReferenceCatalog:
     source = Path(path).expanduser()
     if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_SOURCE_BYTES:
         raise ValueError('Choose a regular ZIP/CSV file under 6 MiB.')
-    items: dict[str, CatalogItem] = {}
+    items: dict[tuple[str, str], CatalogItem] = {}
     parts: dict[str, PartInfo] = {}
 
     def add_table(data: bytes):
         kind, parsed = _parse_table(data)
         if kind == 'items':
             for item in parsed:
-                items.setdefault(item.name.casefold(), item)
+                items.setdefault((item.name.casefold(), item.code), item)
         else:
             for part in parsed:
                 parts.setdefault(part.part.casefold(), part)
