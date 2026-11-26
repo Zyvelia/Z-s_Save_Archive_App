@@ -14,7 +14,7 @@ from __future__ import annotations
 from .bl3_native import _publish, _read_codec
 from .bl3_visual_builders import (
     weapon_part_slots, transplant_part, skill_rows, skill_point_budget,
-    set_existing_skill_points,
+    set_existing_skill_points, transplant_anointment,
 )
 
 MAX_ITEMS = 2500
@@ -86,6 +86,12 @@ def _action(save, kind, action):
                             _int(action['slot'], 'Target slot', 0, 63),
                             _int(action['donor_index'], 'Donor item', 0, MAX_ITEMS),
                             _int(action['donor_slot'], 'Donor slot', 0, 63))
+        elif op == 'weapon_anointment':
+            transplant_anointment(
+                save,
+                _int(action['index'], 'Target item', 0, MAX_ITEMS),
+                _int(action['donor_index'], 'Donor item', 0, MAX_ITEMS),
+                str(action['asset']))
         elif op == 'skill_points':
             set_existing_skill_points(
                 save, _int(action['index'], 'Skill index', 0, 1024),
