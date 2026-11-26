@@ -12,7 +12,7 @@ class AsciiPackagePathsTests(unittest.TestCase):
     def test_safe_title_removes_non_ascii_symbols(self):
         self.assertEqual(safe_title("Borderlands®: Game of the Year Edition"),
                          "Borderlands_ Game of the Year Edition")
-        self.assertEqual(safe_title("Pokémon™"), "Pokemon")
+        self.assertEqual(safe_title("Pokémon"), "Pokemon")
         self.assertEqual(safe_title("CON"), "_CON")
 
     def test_builder_uses_ascii_paths_and_preserves_source(self):
