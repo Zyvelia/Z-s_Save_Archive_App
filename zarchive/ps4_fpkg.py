@@ -11,6 +11,7 @@ import re
 import shutil
 import struct
 import subprocess
+import unicodedata
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import xml.etree.ElementTree as ET
@@ -64,11 +65,32 @@ def _linked(path):
 
 
 def safe_title(value):
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f\ufffd]', '_', value)
+    # The old Sony publishing tools can misinterpret non-ASCII output paths.
+    # Transliterate display names only; do not rename or modify dump files.
+    ascii_name = unicodedata.normalize('NFKD', str(value)).encode('ascii', 'ignore').decode('ascii')
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f\ufffd]', '_', ascii_name)
     name = ' '.join(name.split()).strip(' .')[:96].rstrip(' .')
     if re.match(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)', name, re.I):
         name = '_' + name
     return name or 'Untitled PS4 game'
+
+
+def staging_parent(final):
+    """Keep Orbis build projects on the output drive under an ASCII, short path.
+
+    The final package name may have been derived from an SFO TITLE containing
+    characters that orbis-pub-cmd cannot open reliably as a GP4 project path.
+    """
+    parent = Path(final).parent
+    if os.name != 'nt' or (str(parent).isascii() and len(str(parent)) < 180):
+        return parent
+    stage = Path(parent.anchor) / 'ZArchive_FPKG_Work'
+    if not str(stage).isascii():
+        raise ValueError('The output drive root contains non-ASCII characters; choose another drive.')
+    if stage.exists() and (_linked(stage) or not stage.is_dir()):
+        raise ValueError(f'Unsafe PKG staging directory: {stage}')
+    stage.mkdir(exist_ok=True)
+    return stage
 
 
 def inspect_dump(folder):
@@ -703,7 +725,10 @@ def build_packages(dumps, executable, output, *, preserve_keystone=True, storage
         final.parent.mkdir(exist_ok=True)
         log(f'[{index}/{len(jobs)}] Building {final.name}')
         progress(0)
-        with TemporaryDirectory(prefix='.fpkg-', dir=final.parent) as scratch:
+        work_parent = staging_parent(final)
+        if work_parent != final.parent:
+            log(f'Using ASCII-safe temporary build directory: {work_parent}')
+        with TemporaryDirectory(prefix='.fpkg-', dir=work_parent) as scratch:
             project_path = long_path(Path(scratch) / 'project.gp4')
             package = long_path(Path(scratch) / 'package.pkg')
             project_options = dict(preserve_keystone=preserve_keystone, cancelled=cancelled,
