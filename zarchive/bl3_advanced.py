@@ -12,6 +12,7 @@ are deliberately NOT implemented here.
 from __future__ import annotations
 
 from .bl3_native import _publish, _read_codec
+from .bl3_reference_catalog import normalize_item_code
 from .bl3_visual_builders import (
     weapon_part_slots, transplant_part, skill_rows, skill_point_budget,
     set_existing_skill_points, transplant_anointment,
@@ -47,12 +48,7 @@ def _index(save, value):
 
 
 def _code(value):
-    if not isinstance(value, str) or not (5 <= len(value) <= MAX_CODE_LENGTH):
-        raise ValueError('Supply one valid BL3(...) item code under 8192 characters.')
-    value = value.strip()
-    if not value.startswith('BL3(') or not value.endswith(')'):
-        raise ValueError('Expected a BL3(...) item serial code.')
-    return value
+    return normalize_item_code(value)
 
 
 def _action(save, kind, action):
