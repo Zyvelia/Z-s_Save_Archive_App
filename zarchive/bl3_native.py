@@ -57,6 +57,17 @@ def _read_codec(path, platform, kind):
                              'Check PC vs PS4 and whether Apollo exported decrypted files.') from exc
 
 
+def _preview(save, methods):
+    """Best-effort read-only fields; unsupported codec versions are explicit."""
+    result = {}
+    for label, method in methods.items():
+        try:
+            result[label] = getattr(save, method)()
+        except (AttributeError, KeyError, ValueError, IndexError, TypeError):
+            result[label] = None
+    return result
+
+
 def load_character(path, platform='PS4'):
     source = _source(path)
     validate_profile(f'bl3-{platform.lower()}-character')
@@ -75,6 +86,12 @@ def load_character(path, platform='PS4'):
         'save_type': save.sg_type,
         'platform': platform,
         'kind': 'character',
+        'preview': _preview(save, {
+            'mayhem_levels': 'get_pt_mayhem_levels',
+            'completed_missions': 'get_pt_completed_mission_counts',
+            'guardian_rank': 'get_guardian_rank',
+            'sdus': 'get_sdus',
+        }),
     }
 
 
@@ -92,6 +109,16 @@ def load_profile(path, platform='PS4'):
         'save_type': save.sg_type,
         'platform': platform,
         'kind': 'profile',
+        'preview': _preview(save, {
+            'guardian_rank': 'get_guardian_rank',
+            'guardian_tokens': 'get_guardian_rank_tokens',
+            'vault_card_1_keys': 'get_vaultcard1_keys',
+            'vault_card_2_keys': 'get_vaultcard2_keys',
+            'vault_card_3_keys': 'get_vaultcard3_keys',
+            'heads_unlocked': 'get_char_heads_total',
+            'skins_unlocked': 'get_char_skins_total',
+            'sdus': 'get_sdus',
+        }),
     }
 
 
