@@ -331,7 +331,15 @@ class BL3NativeDialog(QDialog):
         self.console.addItem('Select console…', None)
         for platform in dict.fromkeys(
                 p.platform for p in PROFILES if p.game == self.game.currentData()):
-            self.console.addItem(platform, platform)
+            supported = any(
+                p.editable for p in PROFILES
+                if p.game == self.game.currentData() and p.platform == platform
+            )
+            self.console.addItem(
+                platform if supported else platform + ' (planned)', platform
+            )
+            if not supported:
+                self.console.model().item(self.console.count() - 1).setEnabled(False)
         self.console.blockSignals(False)
         self.console_changed()
 
