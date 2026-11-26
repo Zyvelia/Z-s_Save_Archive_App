@@ -5,10 +5,12 @@ the loaded source only after ZSaveArchive_Backups receives a verified copy.
 """
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QPushButton, QMessageBox, QTabWidget, QWidget, QComboBox,
-    QPlainTextEdit, QListWidget, QGroupBox,
+    QPlainTextEdit, QListWidget, QListWidgetItem, QGroupBox, QApplication,
 )
 
 from .bl3_advanced import list_inventory, COSMETICS
@@ -103,6 +105,10 @@ class BL3AdvancedDialog(QDialog):
     def _inventory(self, layout, kind):
         box = QGroupBox('Inventory entries')
         inner = QVBoxLayout(box)
+        self.search_items = QLineEdit()
+        self.search_items.setPlaceholderText('Search inventory by name, level or balance')
+        self.search_items.textChanged.connect(self._filter_inventory)
+        inner.addWidget(self.search_items)
         self.item_list = QListWidget()
         inner.addWidget(self.item_list)
         self.item_level = self._spin(1, 100)
@@ -126,16 +132,13 @@ class BL3AdvancedDialog(QDialog):
         try:
             self.inventory_records = list_inventory(
                 self.details['path'], self.details['platform'], kind)
-            for item in self.inventory_records:
-                self.item_list.addItem(
-                    f"{item['index']:04d}  {item['name']}  •  Level {item['level']}"
-                )
+            self._filter_inventory('')
         except (OSError, ValueError, RuntimeError) as exc:
             self.inventory_records = []
             self.item_list.addItem('Inventory preview unavailable: ' + str(exc))
         def selected():
-            idx = self.item_list.currentRow()
-            return idx if 0 <= idx < len(self.inventory_records) else None
+            item = self.item_list.currentItem()
+            return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
         def duplicate():
             idx = selected()
             if idx is not None:
@@ -158,6 +161,14 @@ class BL3AdvancedDialog(QDialog):
             self._queue({'op': 'item_add' if kind == 'character' else 'bank_add',
                          'code': code})
         button('Import BL3 code', add_code)
+        def copy_code():
+            idx = selected()
+            if idx is None:
+                return
+            code = self.inventory_records[idx].get('code')
+            if code:
+                QApplication.clipboard().setText(code)
+        button('Copy selected BL3 code', copy_code)
         if kind == 'character':
             def replace_code():
                 idx = selected()
@@ -173,6 +184,21 @@ class BL3AdvancedDialog(QDialog):
             button('Duplicate selected', duplicate)
             button('Set item level', change_level)
             button('Set item Mayhem', change_mayhem)
+
+    def _filter_inventory(self, text):
+        """Maintain original indices even when searching/filtering inventory."""
+        if not hasattr(self, 'inventory_records'):
+            return
+        query = text.strip().casefold()
+        self.item_list.clear()
+        for record in self.inventory_records:
+            display = (f"{record['index']:04d}  {record['name']}  "
+                       f"Level {record['level']}  Mayhem {record['mayhem']}")
+            if query and query not in (display + ' ' + str(record['balance'])).casefold():
+                continue
+            item = QListWidgetItem(display)
+            item.setData(Qt.ItemDataRole.UserRole, record['index'])
+            self.item_list.addItem(item)
 
     def _inventory_page(self):
         layout = self._page('Inventory & Weapons',
