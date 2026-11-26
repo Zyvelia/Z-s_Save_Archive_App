@@ -1,8 +1,8 @@
 """BL3 game-level PC/PS4 codec translation for Apollo-exported GVAS files.
 
-Based on the platform-specific encryption constants documented by
-ZakisM/bl3_save_edit (MIT license, see that project's LICENSE). This does
-not decrypt Sony's PS4 save container: Apollo must export that first.
+Platform-specific encryption constants match the public technical implementation
+in ZakisM/bl3_save_edit. Its redistribution terms must be confirmed before
+shipping a binary release. Apollo must first export the PS4 save container.
 No offsets are guessed: all GVAS strings/format records are length-checked.
 """
 from __future__ import annotations
